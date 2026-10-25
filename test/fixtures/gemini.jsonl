@@ -1,0 +1,11 @@
+{"event": "SessionStart", "payload": {"session_id": "gem-1", "hook_event_name": "SessionStart", "cwd": "/work/someone/g"}}
+{"event": "BeforeAgent", "payload": {"session_id": "gem-1", "hook_event_name": "BeforeAgent", "cwd": "/work/someone/g", "prompt": "TOP-SECRET-PROMPT-TEXT"}}
+{"event": "BeforeTool", "payload": {"session_id": "gem-1", "hook_event_name": "BeforeTool", "cwd": "/work/someone/g", "tool_name": "read_file"}}
+{"event": "AfterTool", "payload": {"session_id": "gem-1", "hook_event_name": "AfterTool", "cwd": "/work/someone/g", "tool_name": "read_file"}}
+{"event": "BeforeTool", "payload": {"session_id": "gem-1", "hook_event_name": "BeforeTool", "cwd": "/work/someone/g", "tool_name": "replace"}}
+{"event": "AfterTool", "payload": {"session_id": "gem-1", "hook_event_name": "AfterTool", "cwd": "/work/someone/g", "tool_name": "replace"}}
+{"event": "BeforeTool", "payload": {"session_id": "gem-1", "hook_event_name": "BeforeTool", "cwd": "/work/someone/g", "tool_name": "run_shell_command"}}
+{"event": "Notification", "payload": {"session_id": "gem-1", "hook_event_name": "Notification", "cwd": "/work/someone/g", "notification_type": "ToolPermission"}}
+{"event": "AfterTool", "payload": {"session_id": "gem-1", "hook_event_name": "AfterTool", "cwd": "/work/someone/g", "tool_name": "run_shell_command"}}
+{"event": "AfterAgent", "payload": {"session_id": "gem-1", "hook_event_name": "AfterAgent", "cwd": "/work/someone/g"}}
+{"event": "SessionEnd", "payload": {"session_id": "gem-1", "hook_event_name": "SessionEnd", "cwd": "/work/someone/g"}}

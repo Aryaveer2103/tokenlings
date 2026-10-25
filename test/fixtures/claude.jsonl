@@ -1,0 +1,11 @@
+{"event": "SessionStart", "payload": {"session_id": "8f1c2d3e-aaaa-bbbb-cccc-0123456789ab", "hook_event_name": "SessionStart", "cwd": "/work/someone/projects/demo-app", "source": "startup"}}
+{"event": "UserPromptSubmit", "payload": {"session_id": "8f1c2d3e-aaaa-bbbb-cccc-0123456789ab", "hook_event_name": "UserPromptSubmit", "cwd": "/work/someone/projects/demo-app", "prompt": "TOP-SECRET-PROMPT-TEXT"}}
+{"event": "PreToolUse", "payload": {"session_id": "8f1c2d3e-aaaa-bbbb-cccc-0123456789ab", "hook_event_name": "PreToolUse", "cwd": "/work/someone/projects/demo-app", "tool_name": "Read", "tool_input": {"file_path": "/work/someone/TOP-SECRET-PROMPT-TEXT"}}}
+{"event": "PostToolUse", "payload": {"session_id": "8f1c2d3e-aaaa-bbbb-cccc-0123456789ab", "hook_event_name": "PostToolUse", "cwd": "/work/someone/projects/demo-app", "tool_name": "Read", "tool_response": "TOP-SECRET-PROMPT-TEXT"}}
+{"event": "PreToolUse", "payload": {"session_id": "8f1c2d3e-aaaa-bbbb-cccc-0123456789ab", "hook_event_name": "PreToolUse", "cwd": "/work/someone/projects/demo-app", "tool_name": "Edit"}}
+{"event": "PostToolUse", "payload": {"session_id": "8f1c2d3e-aaaa-bbbb-cccc-0123456789ab", "hook_event_name": "PostToolUse", "cwd": "/work/someone/projects/demo-app", "tool_name": "Edit"}}
+{"event": "PreToolUse", "payload": {"session_id": "8f1c2d3e-aaaa-bbbb-cccc-0123456789ab", "hook_event_name": "PreToolUse", "cwd": "/work/someone/projects/demo-app", "tool_name": "Bash", "tool_input": {"command": "echo TOP-SECRET-PROMPT-TEXT"}}}
+{"event": "PermissionRequest", "payload": {"session_id": "8f1c2d3e-aaaa-bbbb-cccc-0123456789ab", "hook_event_name": "PermissionRequest", "cwd": "/work/someone/projects/demo-app", "tool_name": "Bash"}}
+{"event": "PostToolUse", "payload": {"session_id": "8f1c2d3e-aaaa-bbbb-cccc-0123456789ab", "hook_event_name": "PostToolUse", "cwd": "/work/someone/projects/demo-app", "tool_name": "Bash"}}
+{"event": "Stop", "payload": {"session_id": "8f1c2d3e-aaaa-bbbb-cccc-0123456789ab", "hook_event_name": "Stop", "cwd": "/work/someone/projects/demo-app"}}
+{"event": "SessionEnd", "payload": {"session_id": "8f1c2d3e-aaaa-bbbb-cccc-0123456789ab", "hook_event_name": "SessionEnd", "cwd": "/work/someone/projects/demo-app", "reason": "exit"}}

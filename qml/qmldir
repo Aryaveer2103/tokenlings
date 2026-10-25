@@ -1,0 +1,12 @@
+singleton Hub 1.0 Hub.qml
+ArtGroup 1.0 ArtGroup.qml
+Gallery 1.0 Gallery.qml
+Pet 1.0 Pet.qml
+Rig 1.0 Rig.qml
+Stage 1.0 Stage.qml
+Theater 1.0 Theater.qml
+PetRow 1.0 PetRow.qml
+FxLayer 1.0 FxLayer.qml
+Excursion 1.0 Excursion.qml
+SafeFile 1.0 SafeFile.qml
+Watch 1.0 Watch.qml

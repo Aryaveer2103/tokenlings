@@ -1,0 +1,200 @@
+#!/bin/sh
+# tokenlings-hook: the bridge from an agent CLI's lifecycle hooks to the pets.
+#
+#   tokenlings-hook --pet <id> --provider <name> [--event <name>] [--account <dir>]
+#
+# --account: the account folder whose settings carry this hook (the installer
+# writes it). Events from another account are left to that account's pet.
+#
+# Reads the hook's JSON from stdin (at most 64 KiB; the rest is drained) and
+# appends one line to $XDG_RUNTIME_DIR/tokenlings/events/<pet>.log:
+#
+#   {"t":<ms>,"p":"<provider>","e":"<event>","c":"<tool category>","k":"<kind>",
+#    "s":"<session hash>","pid":<agent pid>,"chain":[<ancestor pids>],"cwd":"<basename>"}
+#
+# Stored: the event name, a tool category (edit shell read web mcp task other),
+# a notification kind, a hash of the session id, process ids and the cwd's
+# basename. Never prompts, tool input or output, file contents or full paths.
+#
+# Prints nothing, always exits 0, spawns nothing that outlives it, no network.
+
+umask 077
+LC_ALL=C
+export LC_ALL
+
+pet="" provider="" event="" account=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --pet) pet="$2"; shift 2 ;;
+    --provider) provider="$2"; shift 2 ;;
+    --event) event="$2"; shift 2 ;;
+    --account) account="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+# Bounded stdin; drain the rest so the CLI never blocks on a full pipe.
+payload=$(head -c 65536 2>/dev/null)
+[ ${#payload} -ge 65000 ] && cat >/dev/null 2>&1
+
+case "$pet" in ''|*[!a-z0-9_-]*) exit 0 ;; esac
+case "$provider" in ''|*[!a-z0-9_-]*) exit 0 ;; esac
+[ ${#pet} -le 32 ] && [ ${#provider} -le 32 ] || exit 0
+
+# Who is calling. Grok runs Claude Code's hooks too (its Claude compatibility
+# is on by default): a Claude pet ignores events that come from Grok, which
+# has its own pet. Muse is filtered the same way should it ever do the same.
+if [ "$provider" = claude ]; then
+  [ -n "${GROK_HOOK_EVENT:-}${GROK_HOOK_NAME:-}" ] && exit 0
+  [ -n "${MUSE_SESSION_ID:-}" ] && exit 0
+fi
+
+# Which account the event is from: each CLI names its account folder in an
+# environment variable (the table in core/accounts.mjs). A pet's hooks live in
+# its own account's folder, so an event from another account is not this
+# pet's (Claude Code, for one, loads ~/.claude/settings.json as project
+# settings in a session started in $HOME, whichever account it runs). Where
+# one hook location can serve several accounts (OpenCode's global plugins;
+# Grok, should ~/.grok/hooks be shared through its hooks-paths) the event is
+# routed to the pet on its account instead. The folder → pet map is pets.json
+# (each pet's account.configDir), read only when the event names an account
+# other than --account.
+acct="" def="" shared=0
+case "$provider" in
+  claude) acct=${CLAUDE_CONFIG_DIR:-} def=$HOME/.claude ;;
+  codex) acct=${CODEX_HOME:-} def=$HOME/.codex ;;
+  gemini) [ -n "${GEMINI_CLI_HOME:-}" ] && acct=$GEMINI_CLI_HOME/.gemini; def=$HOME/.gemini ;;
+  grok) acct=${GROK_HOME:-} def=$HOME/.grok shared=1 ;;
+  kimi) acct=${KIMI_CODE_HOME:-} def=$HOME/.kimi-code ;;
+  opencode) acct=${OPENCODE_CONFIG_DIR:-} def=${XDG_CONFIG_HOME:-$HOME/.config}/opencode shared=1 ;;
+  muse) [ -n "${XDG_CONFIG_HOME:-}" ] && acct=$XDG_CONFIG_HOME/muse; def=$HOME/.config/muse ;;
+esac
+case "$account" in *[!A-Za-z0-9._/@+-]*) account="" ;; esac
+while [ "${acct%/}" != "$acct" ]; do acct=${acct%/}; done
+while [ "${account%/}" != "$account" ]; do account=${account%/}; done
+if [ -n "$acct" ] && [ "$acct" != "$account" ]; then
+  cfg=${XDG_CONFIG_HOME:-$HOME/.config}/tokenlings/pets.json
+  to=""
+  if [ -f "$cfg" ] && [ -r "$cfg" ] && command -v jq >/dev/null 2>&1; then
+    size=$(wc -c < "$cfg" 2>/dev/null || echo 999999)
+    if [ "$size" -le 262144 ]; then
+      real=$(readlink -f -- "$acct" 2>/dev/null) || real=""
+      to=$(head -c 262144 "$cfg" 2>/dev/null | jq -r --arg p "$provider" --arg a "$acct" --arg r "$real" --arg h "$HOME" --arg def "$def" '
+        def abs: (if startswith("~/") then $h + .[1:] elif . == "~" then $h else . end) | sub("/+$"; "");
+        [ (.pets // [])[]? | select(type == "object" and (.provider // "" | ascii_downcase) == $p)
+          | select((.account.configDir // $def | if type == "string" then . else $def end | abs) as $d | $d == $a or ($r != "" and $d == $r))
+          | (.id // "" | tostring) ] | first // ""' 2>/dev/null) || to=""
+      case "$to" in *[!a-z0-9_-]*) to="" ;; esac
+      [ ${#to} -le 32 ] || to=""
+    fi
+  fi
+  if [ -n "$to" ]; then
+    if [ $shared = 1 ]; then pet=$to
+    elif [ "$to" != "$pet" ]; then exit 0
+    fi
+  elif [ $shared = 0 ] && [ -n "$account" ]; then
+    # an account no pet is on, and not the one this hook belongs to
+    exit 0
+  fi
+fi
+
+# Fields from the payload (snake_case and camelCase spellings both), cleaned
+# and cut to size by jq in one go; it also supplies the time.
+sid="" tool="" cwd="" kind="" t="" event2=""
+if command -v jq >/dev/null 2>&1; then
+  fields=$(printf '%s' "${payload:-null}" | jq -r --arg ev "$event" '
+    def s: if type == "string" then . else "" end;
+    def clean(n): gsub("[^A-Za-z0-9_.:-]"; "_") | .[0:n];
+    (if type == "object" then . else {} end) as $p |
+    [ ($p.session_id // $p.sessionId // $p.session // $p.sessionID // "" | s | gsub("[\t\n\r]"; " ")),
+      ($p.tool_name // $p.toolName // $p.tool // "" | s | clean(64)),
+      (if $ev != "" then $ev else ($p.hook_event_name // $p.hookEventName // $p.event // "" | s) end | clean(40)),
+      ($p.cwd // $p.workdir // "" | s | split("/") | map(select(. != "")) | (last // "") | clean(48)),
+      ($p.notification_type // $p.notificationType // $p.type // $p.reason // "" | s | clean(32)),
+      (now * 1000 | floor | tostring)
+    ] | join("\u001f")' 2>/dev/null) || fields=""
+  us=''
+  IFS="$us" read -r sid tool event2 cwd kind t <<FIELDS
+$fields
+FIELDS
+  [ -n "$event2" ] && event=$event2
+fi
+# Without jq (or with a payload it cannot read): the event from the command
+# line, cleaned here.
+case "$event" in ''|*[!A-Za-z0-9_.:-]*) event=$(printf '%s' "$event" | tr -c 'A-Za-z0-9_.:-' '_' | cut -c1-40) ;; esac
+[ -n "$event" ] || exit 0
+[ -n "$t" ] || t=$(date +%s%3N)
+
+# Tool category from the tool's name (the name itself is not stored).
+case "$tool" in
+  "") cat="" ;;
+  mcp__*|mcp_*|*__mcp__*) cat=mcp ;;
+  TodoWrite|todo*|*_todos|update_plan|*[Pp]lan*) cat=other ;;
+  WebFetch|WebSearch|web_*|*[Ww]eb[Ff]etch*|*[Ww]eb[Ss]earch*|SearchWeb|Fetch*|*URL*|fetch|*browse*) cat=web ;;
+  Edit|Write|MultiEdit|NotebookEdit|*apply_patch*|*edit_file*|*write_file*|str_replace*|*[Rr]eplace*|*[Ee]dit*|*[Ww]rite*|patch|create_file) cat=edit ;;
+  Bash|bash|*shell*|*Shell*|exec*|*bash_input*|run_terminal*|*[Cc]ommand*|terminal) cat=shell ;;
+  Task|Agent|*subagent*|*[Ss]ubagent*) cat=task ;;
+  Read|Grep|Glob|LS|*read_file*|*search*|*Search*|grep|glob|find*|list*|ls|view|*[Rr]ead*) cat=read ;;
+  *) cat=other ;;
+esac
+
+# The session, hashed (no raw ids leave the agent).
+s="default"
+if [ -n "$sid" ]; then
+  h=$(printf '%s' "$sid" | sha256sum 2>/dev/null)
+  h=${h%% *}
+  [ ${#h} -ge 16 ] && s=${h%"${h#????????????????}"}
+fi
+base=$cwd
+
+# The agent and the terminal: walk the parent chain (bounded) so the shell
+# can focus the window that hosts this session.
+chain="" pid=$PPID n=0 agent=""
+while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null && [ $n -lt 16 ]; do
+  chain="$chain${chain:+,}$pid"
+  # /proc/<pid>/stat is one line: "pid (comm) state ppid …" (comm may hold spaces)
+  line=""
+  [ -r "/proc/$pid/stat" ] && read -r line < "/proc/$pid/stat"
+  [ -n "$line" ] || break
+  comm=${line#*(}; comm=${comm%)*}
+  if [ -z "$agent" ]; then
+    case "$comm" in
+      claude*|codex*|grok*|kimi*|opencode*|muse*|gemini*|node|bun) agent=$pid ;;
+    esac
+  fi
+  rest=${line##*) }
+  set -- $rest
+  pid=${2:-}
+  n=$((n + 1))
+done
+[ -n "$agent" ] || agent=$PPID
+
+# Write into our own runtime folder only: owned by us, mode 0700, no symlinks
+# anywhere on the way.
+# Some CLIs (Muse) hand hooks a minimal environment without XDG_RUNTIME_DIR:
+# the standard per-user runtime folder is used then, with the same checks.
+rt=${XDG_RUNTIME_DIR:-}
+[ -n "$rt" ] || rt="/run/user/$(id -u 2>/dev/null)"
+[ -n "$rt" ] && [ -d "$rt" ] && [ ! -L "$rt" ] && [ -O "$rt" ] || exit 0
+for d in "$rt/tokenlings" "$rt/tokenlings/events"; do
+  if [ -L "$d" ]; then exit 0; fi
+  if [ ! -d "$d" ]; then mkdir -m 700 "$d" 2>/dev/null || exit 0; fi
+  [ -O "$d" ] || exit 0
+done
+log="$rt/tokenlings/events/$pet.log"
+[ -L "$log" ] && exit 0
+if [ -e "$log" ]; then
+  [ -f "$log" ] && [ -O "$log" ] || exit 0
+  # Keep it small: past ~60 KiB the log starts over (the shell has long read
+  # it). Checked on one call in eight, plenty at < 200 bytes a line.
+  if [ $(( $$ % 8 )) -eq 0 ]; then
+    size=$(wc -c < "$log" 2>/dev/null || echo 0)
+    if [ "$size" -gt 60000 ]; then
+      tmp="$log.$$"
+      : > "$tmp" && mv -f "$tmp" "$log" 2>/dev/null
+    fi
+  fi
+fi
+printf '{"t":%s,"p":"%s","e":"%s","c":"%s","k":"%s","s":"%s","pid":%s,"chain":[%s],"cwd":"%s"}\n' \
+  "$t" "$provider" "$event" "$cat" "$kind" "$s" "${agent:-0}" "$chain" "$base" >> "$log" 2>/dev/null
+exit 0

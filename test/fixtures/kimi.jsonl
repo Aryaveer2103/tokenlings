@@ -1,0 +1,11 @@
+{"event": "SessionStart", "payload": {"sessionId": "kimi-7", "hookEventName": "SessionStart", "cwd": "/work/someone/k", "source": "startup"}}
+{"event": "UserPromptSubmit", "payload": {"sessionId": "kimi-7", "hookEventName": "UserPromptSubmit", "cwd": "/work/someone/k", "prompt": "TOP-SECRET-PROMPT-TEXT"}}
+{"event": "PreToolUse", "payload": {"sessionId": "kimi-7", "hookEventName": "PreToolUse", "cwd": "/work/someone/k", "toolName": "ReadFile", "toolInput": {"file_path": "/work/someone/TOP-SECRET-PROMPT-TEXT"}}}
+{"event": "PostToolUse", "payload": {"sessionId": "kimi-7", "hookEventName": "PostToolUse", "cwd": "/work/someone/k", "toolName": "ReadFile", "toolResponse": "TOP-SECRET-PROMPT-TEXT"}}
+{"event": "PreToolUse", "payload": {"sessionId": "kimi-7", "hookEventName": "PreToolUse", "cwd": "/work/someone/k", "toolName": "StrReplaceFile"}}
+{"event": "PostToolUse", "payload": {"sessionId": "kimi-7", "hookEventName": "PostToolUse", "cwd": "/work/someone/k", "toolName": "StrReplaceFile"}}
+{"event": "PreToolUse", "payload": {"sessionId": "kimi-7", "hookEventName": "PreToolUse", "cwd": "/work/someone/k", "toolName": "Shell", "toolInput": {"command": "echo TOP-SECRET-PROMPT-TEXT"}}}
+{"event": "PermissionRequest", "payload": {"sessionId": "kimi-7", "hookEventName": "PermissionRequest", "cwd": "/work/someone/k", "toolName": "Shell"}}
+{"event": "PostToolUse", "payload": {"sessionId": "kimi-7", "hookEventName": "PostToolUse", "cwd": "/work/someone/k", "toolName": "Shell"}}
+{"event": "Stop", "payload": {"sessionId": "kimi-7", "hookEventName": "Stop", "cwd": "/work/someone/k"}}
+{"event": "SessionEnd", "payload": {"sessionId": "kimi-7", "hookEventName": "SessionEnd", "cwd": "/work/someone/k", "reason": "exit"}}

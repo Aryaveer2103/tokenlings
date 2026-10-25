@@ -1,0 +1,11 @@
+{"event": "session.created", "payload": {"sessionID": "ses_opencode1", "event": "session.created", "cwd": "/work/someone/o"}}
+{"event": "chat.message", "payload": {"sessionID": "ses_opencode1", "event": "chat.message", "cwd": "/work/someone/o", "prompt": "TOP-SECRET-PROMPT-TEXT"}}
+{"event": "tool.execute.before", "payload": {"sessionID": "ses_opencode1", "event": "tool.execute.before", "cwd": "/work/someone/o", "tool": "read"}}
+{"event": "tool.execute.after", "payload": {"sessionID": "ses_opencode1", "event": "tool.execute.after", "cwd": "/work/someone/o", "tool": "read"}}
+{"event": "tool.execute.before", "payload": {"sessionID": "ses_opencode1", "event": "tool.execute.before", "cwd": "/work/someone/o", "tool": "edit"}}
+{"event": "tool.execute.after", "payload": {"sessionID": "ses_opencode1", "event": "tool.execute.after", "cwd": "/work/someone/o", "tool": "edit"}}
+{"event": "tool.execute.before", "payload": {"sessionID": "ses_opencode1", "event": "tool.execute.before", "cwd": "/work/someone/o", "tool": "bash"}}
+{"event": "permission.asked", "payload": {"sessionID": "ses_opencode1", "event": "permission.asked", "cwd": "/work/someone/o"}}
+{"event": "tool.execute.after", "payload": {"sessionID": "ses_opencode1", "event": "tool.execute.after", "cwd": "/work/someone/o", "tool": "bash"}}
+{"event": "session.idle", "payload": {"sessionID": "ses_opencode1", "event": "session.idle", "cwd": "/work/someone/o"}}
+{"event": "session.deleted", "payload": {"sessionID": "ses_opencode1", "event": "session.deleted", "cwd": "/work/someone/o"}}

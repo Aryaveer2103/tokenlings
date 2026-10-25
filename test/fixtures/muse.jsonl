@@ -1,0 +1,11 @@
+{"event": "SessionStart", "payload": {"session_id": "01a170bc-eee2-76b2-87e6-15d00769a8f0", "hook_event_name": "SessionStart", "cwd": "/work/someone/work", "source": "startup"}}
+{"event": "UserPromptSubmit", "payload": {"session_id": "01a170bc-eee2-76b2-87e6-15d00769a8f0", "hook_event_name": "UserPromptSubmit", "cwd": "/work/someone/work", "prompt": "TOP-SECRET-PROMPT-TEXT"}}
+{"event": "PreToolUse", "payload": {"session_id": "01a170bc-eee2-76b2-87e6-15d00769a8f0", "hook_event_name": "PreToolUse", "cwd": "/work/someone/work", "tool_name": "read_file", "tool_input": {"file_path": "/work/someone/TOP-SECRET-PROMPT-TEXT"}}}
+{"event": "PostToolUse", "payload": {"session_id": "01a170bc-eee2-76b2-87e6-15d00769a8f0", "hook_event_name": "PostToolUse", "cwd": "/work/someone/work", "tool_name": "read_file", "tool_response": "TOP-SECRET-PROMPT-TEXT"}}
+{"event": "PreToolUse", "payload": {"session_id": "01a170bc-eee2-76b2-87e6-15d00769a8f0", "hook_event_name": "PreToolUse", "cwd": "/work/someone/work", "tool_name": "edit_file"}}
+{"event": "PostToolUse", "payload": {"session_id": "01a170bc-eee2-76b2-87e6-15d00769a8f0", "hook_event_name": "PostToolUse", "cwd": "/work/someone/work", "tool_name": "edit_file"}}
+{"event": "PreToolUse", "payload": {"session_id": "01a170bc-eee2-76b2-87e6-15d00769a8f0", "hook_event_name": "PreToolUse", "cwd": "/work/someone/work", "tool_name": "bash_input", "tool_input": {"command": "echo TOP-SECRET-PROMPT-TEXT"}}}
+{"event": "PermissionRequest", "payload": {"session_id": "01a170bc-eee2-76b2-87e6-15d00769a8f0", "hook_event_name": "PermissionRequest", "cwd": "/work/someone/work", "tool_name": "bash_input"}}
+{"event": "PostToolUse", "payload": {"session_id": "01a170bc-eee2-76b2-87e6-15d00769a8f0", "hook_event_name": "PostToolUse", "cwd": "/work/someone/work", "tool_name": "bash_input"}}
+{"event": "Stop", "payload": {"session_id": "01a170bc-eee2-76b2-87e6-15d00769a8f0", "hook_event_name": "Stop", "cwd": "/work/someone/work"}}
+{"event": "SessionEnd", "payload": {"session_id": "01a170bc-eee2-76b2-87e6-15d00769a8f0", "hook_event_name": "SessionEnd", "cwd": "/work/someone/work", "reason": "exit"}}

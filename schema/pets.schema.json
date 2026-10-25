@@ -1,0 +1,388 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Aryaveer2103/tokenlings/schema/pets.schema.json",
+  "title": "Tokenlings pets",
+  "description": "~/.config/tokenlings/pets.json. Every field except pets[].id is optional; anything left out comes from the pet's base form.",
+  "type": "object",
+  "required": [
+    "version",
+    "pets"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "version": {
+      "const": 1
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "powerMode": {
+          "enum": [
+            "auto",
+            "showoff",
+            "balanced",
+            "battery",
+            "still"
+          ],
+          "default": "auto"
+        },
+        "roaming": {
+          "enum": [
+            "home",
+            "bar",
+            "desktop"
+          ],
+          "default": "bar"
+        },
+        "social": {
+          "type": "boolean",
+          "default": true
+        },
+        "ambient": {
+          "enum": [
+            "rare",
+            "normal",
+            "lively"
+          ],
+          "default": "normal"
+        },
+        "quietHours": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "from": {
+              "type": "string",
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+            },
+            "to": {
+              "type": "string",
+              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+            }
+          }
+        },
+        "reducedMotion": {
+          "type": "boolean",
+          "default": false
+        },
+        "notifications": {
+          "type": "boolean",
+          "default": false
+        },
+        "showCwd": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show the session's folder name (never the full path) in tooltips."
+        },
+        "progression": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "pets": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,31}$"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 24
+          },
+          "provider": {
+            "type": "string",
+            "maxLength": 32,
+            "examples": [
+              "claude",
+              "codex",
+              "gemini",
+              "grok",
+              "kimi",
+              "opencode",
+              "deepseek",
+              "antigravity",
+              "muse"
+            ]
+          },
+          "account": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "configDir": {
+                "type": "string",
+                "maxLength": 512,
+                "description": "The account's config folder, e.g. ~/.claude-work"
+              },
+              "match": {
+                "type": "string",
+                "maxLength": 128
+              }
+            }
+          },
+          "baseForm": {
+            "enum": [
+              "ember",
+              "slate",
+              "prism",
+              "mochi",
+              "jinx",
+              "tide",
+              "shell",
+              "drift",
+              "lyra",
+              "bit"
+            ]
+          },
+          "look": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "enum": [
+                  "dumpling",
+                  "tallBlob",
+                  "roundBlob",
+                  "bean",
+                  "mochiCube",
+                  "droplet",
+                  "pear",
+                  "ghosty"
+                ]
+              },
+              "eyes": {
+                "enum": [
+                  "dot",
+                  "ovalSparkle",
+                  "sleepy",
+                  "button",
+                  "visor",
+                  "anime",
+                  "caret",
+                  "starry",
+                  "browDot",
+                  "lash"
+                ]
+              },
+              "mouth": {
+                "enum": [
+                  "smile",
+                  "grin",
+                  "cat",
+                  "o",
+                  "flat",
+                  "tongue",
+                  "smirk"
+                ]
+              },
+              "topper": {
+                "enum": [
+                  "none",
+                  "curl",
+                  "buns",
+                  "sprout",
+                  "antenna",
+                  "earsCat",
+                  "earsBunny",
+                  "earsBear",
+                  "cowlick",
+                  "ponytail",
+                  "crescentClip",
+                  "waveFringe",
+                  "noteAntennae"
+                ]
+              },
+              "pattern": {
+                "enum": [
+                  "none",
+                  "bellyPatch",
+                  "spots",
+                  "stripes",
+                  "gradient",
+                  "freckles",
+                  "scanlines",
+                  "starfield"
+                ]
+              },
+              "accessories": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "enum": [
+                    "headphones",
+                    "roundGlasses",
+                    "squareGlasses",
+                    "monocle",
+                    "scarf",
+                    "bow",
+                    "beanie",
+                    "cap",
+                    "crown",
+                    "halo",
+                    "bandana",
+                    "cape",
+                    "backpack",
+                    "bellCollar",
+                    "flower",
+                    "nightcap",
+                    "sleepMask",
+                    "shades",
+                    "orbitRing"
+                  ]
+                }
+              },
+              "palette": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "body": {
+                    "type": "string",
+                    "pattern": "^#?[0-9A-Fa-f]{6}$"
+                  },
+                  "shade": {
+                    "type": "string",
+                    "pattern": "^#?[0-9A-Fa-f]{6}$"
+                  },
+                  "light": {
+                    "type": "string",
+                    "pattern": "^#?[0-9A-Fa-f]{6}$"
+                  },
+                  "accent": {
+                    "type": "string",
+                    "pattern": "^#?[0-9A-Fa-f]{6}$"
+                  },
+                  "cheek": {
+                    "type": "string",
+                    "pattern": "^#?[0-9A-Fa-f]{6}$"
+                  },
+                  "eye": {
+                    "type": "string",
+                    "pattern": "^#?[0-9A-Fa-f]{6}$"
+                  }
+                }
+              },
+              "followTheme": {
+                "type": "boolean"
+              },
+              "size": {
+                "enum": [
+                  "small",
+                  "medium",
+                  "large"
+                ]
+              },
+              "evolution": {
+                "enum": [
+                  "inferno",
+                  "astral",
+                  "cyber",
+                  "nebula",
+                  "moonlit",
+                  "neon",
+                  "abyss",
+                  "glitch",
+                  "comet",
+                  "encore",
+                  "prime"
+                ],
+                "description": "Which evolved form this pet takes"
+              },
+              "evolved": {
+                "enum": [
+                  "auto",
+                  "on",
+                  "off"
+                ],
+                "default": "auto",
+                "description": "auto: evolves at level 10 (with progression on)"
+              },
+              "variant": {
+                "enum": [
+                  "auto",
+                  "off"
+                ],
+                "default": "auto",
+                "description": "auto: a second, third … pet of the same provider gets its own colours, accessory and a nudge to one trait, seeded from its account folder. off: the pure base form."
+              }
+            }
+          },
+          "personality": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "energy": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "sociability": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "mischief": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "sleepiness": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
+          "signatureMove": {
+            "enum": [
+              "bowAndSpin",
+              "moonwalkLaunch",
+              "yawnRoll",
+              "scrollUnfurl",
+              "micDropStrut",
+              "trickShot",
+              "glitchTeleport",
+              "zeroGSomersault",
+              "twirl",
+              "hopSpin",
+              "thoughtfulSpin",
+              "moonwalk",
+              "twinJump",
+              "longStretch",
+              "prank",
+              "diveRoll"
+            ],
+            "description": "Double-click plays it. Older names (thoughtfulSpin, moonwalk, twinJump, longStretch, prank, diveRoll) are read as their successors."
+          },
+          "onClick": {
+            "enum": [
+              "focus",
+              "jump",
+              "panel",
+              "none"
+            ]
+          },
+          "home": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}

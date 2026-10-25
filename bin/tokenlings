@@ -1,0 +1,679 @@
+#!/bin/sh
+# tokenlings: command line for the Tokenlings plugin.
+#
+#   tokenlings list                                       pets in pets.json, and which hooks drive them
+#   tokenlings add <id> [--provider P] [--name N] [--config-dir DIR] [--form F]
+#   tokenlings edit <id> <key>=<value>...                 e.g. look.body=bean personality.energy=0.8
+#   tokenlings rename <id> <name>
+#   tokenlings remove <id> [--yes]
+#   tokenlings export <id>                                a tkl1:… card to share the pet's design
+#   tokenlings import <card> [--id ID] [--provider P] [--config-dir DIR]
+#   tokenlings hooks install <provider> --pet <id> [--config-dir DIR] [--yes] [--dry-run]
+#   tokenlings hooks uninstall <provider> [--config-dir DIR] [--yes] [--dry-run]
+#   tokenlings hooks status
+#   tokenlings doctor
+#   tokenlings demo [--state STATE] [--pet PET] [--seed N]    (no options: every state in turn)
+#   tokenlings event <pet> <event> [--tool CATEGORY]      a test event, as a hook would send it
+#   tokenlings bench [set] [seconds]                      (from a checkout with tools/)
+#   tokenlings uninstall [--purge] [--yes]                every hook we installed; --purge also our files
+#
+# --json on any command prints machine-readable output.
+# providers: claude codex grok kimi opencode muse gemini
+#
+# The installer never writes without showing the exact file and a diff and
+# getting a yes (or --yes). It backs the file up first, keeps every hook that
+# is not ours, and marks ours so uninstall removes only those. Hook commands
+# are guarded, so removing the plugin never breaks an agent CLI.
+set -u
+umask 077
+
+ME=$(readlink -f "$0" 2>/dev/null || echo "$0")
+PLUGIN=$(cd "$(dirname "$ME")/.." && pwd)
+HOOK="$PLUGIN/bin/tokenlings-hook"
+SCHEMA="$PLUGIN/schema/pets.schema.json"
+STATE=${XDG_STATE_HOME:-$HOME/.local/state}/tokenlings
+CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/tokenlings
+CONFIG_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/tokenlings
+CONFIG=$CONFIG_DIR/pets.json
+MARK="tokenlings-hook"
+
+# --json anywhere on the line
+JSON=0
+for a in "$@"; do [ "$a" = --json ] && JSON=1; done
+if [ $JSON = 1 ]; then
+  n=$#
+  while [ $n -gt 0 ]; do a=$1; shift; [ "$a" = --json ] || set -- "$@" "$a"; n=$((n - 1)); done
+fi
+
+die() {
+  if [ $JSON = 1 ]; then jq -cn --arg e "$*" '{ ok: false, error: $e }' 2>/dev/null || printf '{"ok":false}\n'; else printf 'tokenlings: %s\n' "$*" >&2; fi
+  exit 1
+}
+say() { [ $JSON = 1 ] || printf '%s\n' "$*"; }
+need_jq() { command -v jq >/dev/null 2>&1 || die "jq is needed (it ships with Omarchy)"; }
+valid_id() { case "$1" in ''|-*|*[!a-z0-9_-]*) return 1 ;; esac; [ ${#1} -le 32 ]; }
+confirm() {  # confirm <question>: yes from --yes or the terminal
+  [ "${YES:-0}" = 1 ] && return 0
+  printf '%s [y/N] ' "$1"
+  read -r answer < /dev/tty 2>/dev/null || answer=""
+  case "$answer" in y|Y|yes|YES) return 0 ;; esac
+  return 1
+}
+
+# ---- pets.json: read (bounded, a regular file we own), write (atomic)
+pets_json() {
+  if [ ! -e "$CONFIG" ]; then echo '{"version":1,"settings":{},"pets":[]}'; return 0; fi
+  [ -L "$CONFIG" ] && die "$CONFIG is a symlink; not reading through it"
+  [ -f "$CONFIG" ] || die "$CONFIG is not a regular file"
+  size=$(wc -c < "$CONFIG")
+  [ "$size" -le 262144 ] || die "$CONFIG is larger than 256 KiB"
+  jq -e 'if type == "array" then { version: 1, pets: . } elif type == "object" then . else error("not an object") end
+         | .pets = (.pets // []) | if (.pets | type) == "array" then . else error("pets is not a list") end' "$CONFIG" 2>/dev/null \
+    || die "$CONFIG is not valid JSON (tokenlings doctor)"
+}
+pets_write() {  # pets_write <new JSON on stdin>
+  mkdir -p -m 700 "$CONFIG_DIR" || die "cannot create $CONFIG_DIR"
+  [ -L "$CONFIG" ] && die "$CONFIG is a symlink; not writing through it"
+  tmp="$CONFIG.tokenlings.$$"
+  jq --arg schema "file://$SCHEMA" 'if has("$schema") then . else { "$schema": $schema } + . end' > "$tmp" || { rm -f "$tmp"; die "could not write $CONFIG"; }
+  mv -f "$tmp" "$CONFIG" || die "cannot replace $CONFIG"
+}
+has_pet() { pets_json | jq -e --arg id "$1" 'any(.pets[]; (.id // "") == $id)' >/dev/null; }
+
+# A base form for a provider (as forms/forms.mjs maps them).
+form_for() {
+  case "$1" in
+    claude|claude-desktop) echo ember ;; codex|chatgpt) echo slate ;; gemini) echo prism ;; kimi) echo mochi ;;
+    grok) echo jinx ;; deepseek) echo tide ;; opencode) echo shell ;; antigravity) echo drift ;; muse) echo lyra ;; *) echo bit ;;
+  esac
+}
+
+# Checks one value against its node in the shipped JSON schema (so the CLI
+# never accepts what the plugin would not). path: e.g. look.body
+SCHEMA_CHECK='
+  def node($path): reduce ($path | split(".")[]) as $k ($S[0].properties.pets.items;
+    if . == null then null else (.properties[$k] // null) end);
+  def ok($n; $v):
+    if $n == null then false
+    elif ($n.enum // null) != null and ($v | type) != "array" then ($n.enum | index([$v])) != null
+    elif $n.type == "boolean" then ($v | type) == "boolean"
+    elif $n.type == "number" then ($v | type) == "number" and ($n.minimum == null or $v >= $n.minimum) and ($n.maximum == null or $v <= $n.maximum)
+    elif $n.type == "string" then ($v | type) == "string" and ($n.pattern == null or ($v | test($n.pattern)))
+    elif $n.type == "array" then ($v | type) == "array" and ($v | length) <= 16 and ($v | unique | length) == ($v | length)
+      and all($v[]; . as $x | ($n.items.enum // null) == null or ($n.items.enum | index([$x])) != null)
+    else false end;'
+
+# key=value → a typed value for that key (from its schema node), or an error.
+typed_value() {  # typed_value <key> <raw value>
+  jq -cn --slurpfile S "$SCHEMA" --arg k "$1" --arg v "$2" "$SCHEMA_CHECK"'
+    node($k) as $n
+    | (if $n == null then error("unknown key")
+       elif $n.type == "boolean" then (if $v == "true" then true elif $v == "false" then false else error("true or false") end)
+       elif $n.type == "number" then ($v | tonumber? // error("a number"))
+       elif $n.type == "array" then ($v | split(",") | map(select(. != "")))
+       else $v end) as $x
+    | if ok($n; $x) then $x else error("not allowed") end' 2>/dev/null
+}
+
+# ---- pets
+pets_list() {
+  need_jq
+  wired=$(hooks_status_raw)
+  pets_json | jq -r --arg wired "$wired" --argjson json $JSON '
+    ($wired | split("\n") | map(select(length > 0) | split("\t")) | map({ provider: .[0], file: .[1], pets: ((.[2] // "") | split(" ") | map(select(. != ""))) })) as $w
+    | [.pets[] | select(type == "object") | . as $pet | {
+        id, name: (.name // .id), provider: (.provider // "demo"), form: (.baseForm // null), enabled: (.enabled != false),
+        account: (.account.configDir // null),
+        hooks: [ $w[] | select(.pets | index([$pet.id // ""])) | .provider + ":" + .file ] }] as $list
+    | if $json == 1 then $list
+      elif ($list | length) == 0 then "no pets yet (a demo pet is shown); tokenlings add <id> --provider claude"
+      else ($list[] | "\(.id)\t\(.name)\t\(.provider)\t\(if .enabled then "on" else "off" end)\t\(.account // "-")\t\(if (.hooks | length) > 0 then "hooks: " + (.hooks | join(", ")) else "no hooks" end)") end'
+}
+
+pets_add() {
+  need_jq
+  id="" prov="demo" name="" dir="" form=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --provider) prov=${2:-}; shift 2 ;; --name) name=${2:-}; shift 2 ;; --config-dir) dir=${2:-}; shift 2 ;; --form) form=${2:-}; shift 2 ;;
+      -*) die "unknown option $1" ;; *) id=$1; shift ;;
+    esac
+  done
+  valid_id "$id" || die "usage: tokenlings add <id> [--provider P] [--name N] [--config-dir DIR] (id: a-z 0-9 _ -, ≤ 32)"
+  valid_id "$prov" || die "--provider: a-z 0-9 _ -"
+  has_pet "$id" && die "a pet called '$id' already exists"
+  [ -n "$form" ] || form=$(form_for "$prov")
+  typed_value baseForm "$form" >/dev/null || die "unknown base form '$form'"
+  [ ${#name} -le 24 ] || die "--name: at most 24 characters"
+  [ ${#dir} -le 512 ] || die "--config-dir: too long"
+  pets_json | jq --arg id "$id" --arg p "$prov" --arg n "$name" --arg d "$dir" --arg f "$form" '
+    .pets += [{ id: $id, provider: $p, baseForm: $f } + (if $n != "" then { name: $n } else {} end) + (if $d != "" then { account: { configDir: $d } } else {} end)]' | pets_write
+  if [ $JSON = 1 ]; then jq -cn --arg id "$id" '{ ok: true, added: $id }'; else say "added $id ($prov, $form). Connect it: tokenlings hooks install $prov --pet $id${dir:+ --config-dir $dir}"; fi
+}
+
+pets_edit() {
+  need_jq
+  id=${1:-}; shift 2>/dev/null || true
+  valid_id "$id" && [ $# -gt 0 ] || die "usage: tokenlings edit <id> <key>=<value>... (keys as in pets.json, e.g. look.body=bean)"
+  has_pet "$id" || die "no pet called '$id'"
+  doc=$(pets_json)
+  for kv in "$@"; do
+    case "$kv" in *=*) ;; *) die "expected key=value, got '$kv'" ;; esac
+    k=${kv%%=*} v=${kv#*=}
+    case "$k" in id) die "ids do not change; add a new pet instead" ;; esac
+    case "$k" in name) [ -n "$v" ] && [ ${#v} -le 24 ] || die "name: 1–24 characters" ;; provider) valid_id "$v" || die "provider: a-z 0-9 _ -" ;; esac
+    val=$(typed_value "$k" "$v") || die "$k=$v: not a valid value (see schema/pets.schema.json)"
+    doc=$(printf '%s' "$doc" | jq --arg id "$id" --arg k "$k" --argjson v "$val" '
+      .pets |= map(if (.id // "") == $id then setpath($k | split("."); $v) else . end)') || die "could not edit"
+  done
+  printf '%s' "$doc" | pets_write
+  if [ $JSON = 1 ]; then jq -cn --arg id "$id" '{ ok: true, edited: $id }'; else say "edited $id"; fi
+}
+
+pets_rename() {
+  need_jq
+  id=${1:-} name=${2:-}
+  valid_id "$id" && [ -n "$name" ] && [ ${#name} -le 24 ] || die "usage: tokenlings rename <id> <name> (1–24 characters)"
+  has_pet "$id" || die "no pet called '$id'"
+  pets_json | jq --arg id "$id" --arg n "$name" '.pets |= map(if (.id // "") == $id then .name = $n else . end)' | pets_write
+  if [ $JSON = 1 ]; then jq -cn --arg id "$id" --arg n "$name" '{ ok: true, id: $id, name: $n }'; else say "$id is now called $name"; fi
+}
+
+pets_remove() {
+  need_jq
+  id=""
+  while [ $# -gt 0 ]; do case "$1" in --yes|-y) YES=1; shift ;; -*) die "unknown option $1" ;; *) id=$1; shift ;; esac; done
+  valid_id "$id" || die "usage: tokenlings remove <id> [--yes]"
+  has_pet "$id" || die "no pet called '$id'"
+  confirm "Remove $id from pets.json (its stats and any hooks stay; see tokenlings hooks status)?" || { say "nothing removed."; [ $JSON = 1 ] && jq -cn '{ ok: false, removed: null }'; return 1; }
+  pets_json | jq --arg id "$id" '.pets |= map(select((.id // "") != $id))' | pets_write
+  if [ $JSON = 1 ]; then jq -cn --arg id "$id" '{ ok: true, removed: $id }'; else say "removed $id"; fi
+}
+
+# ---- pet cards: tkl1:<base64url JSON>.<cksum CRC, 8 hex> (core/card.mjs)
+card_export() {
+  need_jq
+  id=${1:-}
+  valid_id "$id" || die "usage: tokenlings export <id>"
+  has_pet "$id" || die "no pet called '$id'"
+  tmp=$(mktemp) || die "mktemp failed"
+  pets_json | jq -cj --arg id "$id" --arg form "" '
+    (.pets[] | select((.id // "") == $id)) as $p
+    | { v: 1, n: ($p.name // $p.id), f: ($p.baseForm // null), p: ($p.provider // null),
+        l: (($p.look // {}) | with_entries(select(.key | IN("body","eyes","mouth","topper","accessories","pattern","palette","followTheme","size","evolution","evolved")))
+            | if .palette then .palette |= (with_entries(select(.key | IN("body","shade","light","accent","cheek","eye")) | select(.value | type == "string" and test("^#?[0-9A-Fa-f]{6}$")) | .value |= ("#" + ltrimstr("#") | ascii_upcase)))
+                                | if (.palette | length) == 0 then del(.palette) else . end else . end),
+        q: (($p.personality // {}) | with_entries(select(.key | IN("energy","sociability","mischief","sleepiness")))),
+        m: ($p.signatureMove // null) }
+    | with_entries(select(.value != null))' > "$tmp"
+  # the base form, when the pet only names its provider
+  if ! jq -e 'has("f")' "$tmp" >/dev/null; then
+    f=$(form_for "$(jq -r '.p // ""' "$tmp")")
+    jq -cj --arg f "$f" '. + { f: $f }' "$tmp" > "$tmp.2" && mv "$tmp.2" "$tmp"
+  fi
+  b64=$(base64 -w0 < "$tmp" | tr '+/' '-_' | tr -d '=')
+  sum=$(printf '%08x' "$(cksum < "$tmp" | cut -d' ' -f1)")
+  rm -f "$tmp"
+  card="tkl1:$b64.$sum"
+  if [ $JSON = 1 ]; then jq -cn --arg id "$id" --arg c "$card" '{ ok: true, id: $id, card: $c }'; else printf '%s\n' "$card"; fi
+}
+
+# The same rules as core/card.mjs's validate(), against the shipped schema.
+CARD_CHECK='
+  def has_only($keys): (keys - $keys) == [];
+  def P: $S[0].properties.pets.items.properties;
+  def inenum($node; $v): ($node.enum // []) | index([$v]) != null;
+  type == "object" and has_only(["v","n","f","p","l","q","m"]) and .v == 1
+  and (.n | type == "string" and (gsub("^\\s+|\\s+$"; "") | length) >= 1 and length <= 24)
+  and inenum(P.baseForm; .f)
+  and ((has("p") | not) or (.p | type == "string" and test("^[a-z0-9_-]{1,32}$")))
+  and ((has("m") | not) or inenum(P.signatureMove; .m))
+  and ((has("q") | not) or (.q | type == "object" and has_only(["energy","sociability","mischief","sleepiness"]) and all(.[]; type == "number" and . >= 0 and . <= 1)))
+  and (.l | type == "object" and has_only(["body","eyes","mouth","topper","accessories","pattern","palette","followTheme","size","evolution","evolved"])
+    and (. as $l | all(["body","eyes","mouth","topper","pattern","size","evolution","evolved"][]; . as $k | ($l[$k] // null) == null or inenum(P.look.properties[$k]; $l[$k])))
+    and ((.accessories // null) == null or (.accessories | type == "array" and length <= 16 and (unique | length) == length
+         and all(.[]; . as $a | P.look.properties.accessories.items.enum | index([$a]) != null)))
+    and ((.palette // null) == null or (.palette | type == "object" and has_only(["body","shade","light","accent","cheek","eye"]) and all(.[]; type == "string" and test("^#[0-9A-Fa-f]{6}$"))))
+    and ((.followTheme // null) == null or (.followTheme | type == "boolean")))'
+
+card_import() {
+  need_jq
+  card="" id="" prov="" dir=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --id) id=${2:-}; shift 2 ;; --provider) prov=${2:-}; shift 2 ;; --config-dir) dir=${2:-}; shift 2 ;; --yes|-y) YES=1; shift ;;
+      -*) die "unknown option $1" ;; *) card=$1; shift ;;
+    esac
+  done
+  [ ${#card} -le 4096 ] || die "that card is too long"
+  case "$card" in tkl1:?*.????????) ;; *) die "not a Tokenlings card (tkl1:…)" ;; esac
+  body=${card#tkl1:}; sum=${body##*.}; b64=${body%.*}
+  case "$b64" in *[!A-Za-z0-9_-]*) die "damaged card (not base64url)" ;; esac
+  case "$sum" in *[!0-9a-f]*) die "damaged card (checksum)" ;; esac
+  tmp=$(mktemp) || die "mktemp failed"
+  trap 'rm -f "$tmp"' EXIT
+  pad=$(( (4 - ${#b64} % 4) % 4 ))
+  { printf '%s' "$b64" | tr '_-' '/+'; [ $pad -ge 1 ] && printf '='; [ $pad -ge 2 ] && printf '='; } | base64 -d > "$tmp" 2>/dev/null || die "damaged card (not base64url)"
+  [ "$(printf '%08x' "$(cksum < "$tmp" | cut -d' ' -f1)")" = "$sum" ] || die "damaged card (checksum does not match)"
+  jq -e --slurpfile S "$SCHEMA" "$CARD_CHECK" "$tmp" >/dev/null 2>&1 || die "this card is not one Tokenlings can use (unknown parts or values)"
+  [ -n "$prov" ] || prov=$(jq -r '.p // "demo"' "$tmp")
+  valid_id "$prov" || die "--provider: a-z 0-9 _ -"
+  if [ -z "$id" ]; then
+    id=$(jq -r '.n | ascii_downcase | gsub("[^a-z0-9_-]+"; "-") | gsub("^-+|-+$"; "") | .[0:28]' "$tmp")
+    valid_id "$id" || id=$(jq -r '.f' "$tmp")
+    base=$id n=2
+    while has_pet "$id"; do id="$base-$n"; n=$((n + 1)); done
+  fi
+  valid_id "$id" || die "--id: a-z 0-9 _ -"
+  has_pet "$id" && die "a pet called '$id' already exists (--id another)"
+  design=$(cat "$tmp")
+  pets_json | jq --arg id "$id" --arg p "$prov" --arg d "$dir" --argjson c "$design" '
+    .pets += [{ id: $id, name: ($c.n | gsub("^\\s+|\\s+$"; "")), provider: $p, baseForm: $c.f, look: $c.l }
+              + (if $c.q then { personality: $c.q } else {} end) + (if $c.m then { signatureMove: $c.m } else {} end)
+              + (if $d != "" then { account: { configDir: $d } } else {} end)]' | pets_write
+  if [ $JSON = 1 ]; then jq -cn --arg id "$id" '{ ok: true, imported: $id }'; else say "imported as $id. Connect it: tokenlings hooks install $prov --pet $id"; fi
+}
+
+# The command a CLI runs: guarded, so a removed plugin is a silent no-op.
+# ACCOUNT (set by hooks install): the account folder these hooks belong to,
+# so the hook can leave other accounts' events to their own pets.
+ACCOUNT=""
+hook_cmd() {  # hook_cmd <pet> <provider> <event>
+  printf "[ -x '%s' ] && '%s' --pet %s --provider %s --event %s%s; exit 0" "$HOOK" "$HOOK" "$1" "$2" "$3" "${ACCOUNT:+ --account '$ACCOUNT'}"
+}
+# The account folder of a hooks file (empty for OpenCode, whose global
+# plugin serves every account: its hook routes by environment).
+account_of() {  # account_of <provider> <file>
+  case "$1" in
+    opencode) return 0 ;;
+    grok) a=$(dirname "$(dirname "$2")") ;;
+    *) a=$(dirname "$2") ;;
+  esac
+  case "$a" in *[!A-Za-z0-9._/@+-]*) return 0 ;; esac
+  printf '%s' "$a"
+}
+
+# ---- where each provider keeps its hooks
+target_file() {  # target_file <provider> <config dir or "">
+  p=$1 d=$2
+  case "$p" in
+    claude) printf '%s/settings.json' "${d:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}" ;;
+    codex) printf '%s/hooks.json' "${d:-${CODEX_HOME:-$HOME/.codex}}" ;;
+    grok) printf '%s/hooks/tokenlings.json' "${d:-${GROK_HOME:-$HOME/.grok}}" ;;  # $GROK_HOME/hooks (Grok 1.0.70 reads no other user folder then)
+    kimi) printf '%s/config.toml' "${d:-${KIMI_CODE_HOME:-$HOME/.kimi-code}}" ;;
+    opencode) printf '%s/plugins/tokenlings.js' "${d:-${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}}" ;;
+    muse) printf '%s/settings.json' "${d:-${XDG_CONFIG_HOME:-$HOME/.config}/muse}" ;;
+    gemini) printf '%s/settings.json' "${d:-$HOME/.gemini}" ;;
+    *) return 1 ;;
+  esac
+}
+
+events_for() {
+  case "$1" in
+    claude) echo "SessionStart UserPromptSubmit PreToolUse PostToolUse PostToolUseFailure PermissionRequest PermissionDenied Notification SubagentStart SubagentStop PreCompact PostCompact Stop StopFailure SessionEnd" ;;
+    grok) echo "SessionStart UserPromptSubmit PreToolUse PostToolUse PostToolUseFailure PermissionDenied Notification SubagentStart SubagentStop PreCompact PostCompact Stop StopFailure StopCancelled SessionEnd" ;;
+    codex) echo "SessionStart UserPromptSubmit PreToolUse PermissionRequest PostToolUse Stop Interrupt SessionEnd" ;;
+    kimi) echo "SessionStart UserPromptSubmit PreToolUse PostToolUse PostToolUseFailure PermissionRequest PermissionResult SubagentStart SubagentStop PreCompact PostCompact Stop StopFailure Interrupt SessionEnd" ;;
+    muse) echo "SessionStart UserPromptSubmit PreToolUse PostToolUse PostToolUseFailure PermissionRequest Notification Stop SessionEnd" ;;
+    gemini) echo "SessionStart SessionEnd BeforeAgent AfterAgent BeforeTool AfterTool Notification PreCompress" ;;
+  esac
+}
+
+# ---- building the new file (to stdout) from the old one
+# Claude-shaped JSON ({"hooks": {Event: [groups]}}): drop our groups, add one
+# group per event. Positions do not matter to these CLIs.
+json_merge() {  # json_merge <file> <provider> <pet>
+  _jf=$1 _jp=$2 _jpet=$3
+  groups="{}"
+  for ev in $(events_for "$_jp"); do
+    groups=$(printf '%s' "$groups" | jq --arg ev "$ev" --arg cmd "$(hook_cmd "$_jpet" "$_jp" "$ev")" \
+      '.[$ev] = [{ hooks: [{ type: "command", command: $cmd, timeout: 5 }] }]')
+  done
+  { [ -s "$_jf" ] && cat "$_jf" || echo '{}'; } | jq --argjson add "$groups" --arg mark "$MARK" --arg prov "$_jp" '
+    def ours: (.hooks // []) | any(.command? // "" | contains($mark));
+    (if $prov == "muse" and (.schema_version == null) then .schema_version = 1 else . end)
+    | .hooks = ((.hooks // {}) | with_entries(.value |= map(select(ours | not))) | with_entries(select(.value | length > 0)))
+    | reduce ($add | to_entries[]) as $e (.; .hooks[$e.key] = ((.hooks[$e.key] // []) + $e.value))'
+}
+json_strip() {  # json_strip <file>
+  jq --arg mark "$MARK" '
+    def ours: (.hooks // []) | any(.command? // "" | contains($mark));
+    if .hooks then .hooks |= (with_entries(.value |= map(select(ours | not))) | with_entries(select(.value | length > 0)))
+      | if (.hooks | length) == 0 then del(.hooks) else . end else . end' "$1"
+}
+# Codex trusts hooks by position ("file:event:group:hook" in config.toml), so
+# others' groups must never move: ours replace our old group in place, or are
+# appended at the end; uninstall empties our group instead of removing it
+# unless it is the last one.
+codex_merge() {
+  _cf=$1 _cpet=$2
+  { [ -s "$_cf" ] && cat "$_cf" || echo '{}'; } | jq --arg mark "$MARK" --arg hook "$HOOK" --arg pet "$_cpet" --arg acct "$ACCOUNT" --arg evs "$(events_for codex)" '
+    def ours: (.hooks // []) | any(.command? // "" | contains($mark));
+    def cmd($ev): "[ -x '"'"'\($hook)'"'"' ] && '"'"'\($hook)'"'"' --pet \($pet) --provider codex --event \($ev)\(if $acct != "" then " --account '"'"'\($acct)'"'"'" else "" end); exit 0";
+    reduce ($evs | split(" ")[]) as $ev (.;
+      .hooks[$ev] = ((.hooks[$ev] // []) as $g
+        | ($g | map(ours) | index(true)) as $i
+        | if $i == null then $g + [{ hooks: [{ type: "command", command: cmd($ev), timeout: 5 }] }]
+          else $g | .[$i] = { hooks: [{ type: "command", command: cmd($ev), timeout: 5 }] } end))'
+}
+codex_strip() {
+  jq --arg mark "$MARK" '
+    def ours: (.hooks // []) | any(.command? // "" | contains($mark));
+    if .hooks then .hooks |= (with_entries(.value |= (
+        length as $n | to_entries
+        | map(if (.value | ours) then (if .key == $n - 1 then empty else .value = { hooks: [] } end) else . end)
+        | map(.value))) | with_entries(select(.value | length > 0)))
+    else . end' "$1"
+}
+# Kimi: a marked block of [[hooks]] tables at the end of config.toml.
+toml_strip() { [ -f "$1" ] && sed '/^# >>> tokenlings/,/^# <<< tokenlings/d' "$1" || true; }
+toml_merge() {
+  _tf=$1 _tpet=$2
+  if [ -f "$_tf" ] && grep -Eq '^[[:space:]]*hooks[[:space:]]*=' "$_tf"; then
+    die "$_tf sets hooks = [...] inline; add Tokenlings' hooks by hand or switch it to [[hooks]] tables"
+  fi
+  toml_strip "$_tf"
+  printf '\n# >>> tokenlings (pet %s): managed by `tokenlings hooks install kimi`; remove with `tokenlings hooks uninstall kimi`\n' "$_tpet"
+  for ev in $(events_for kimi); do
+    cmd=$(hook_cmd "$_tpet" kimi "$ev" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    printf '[[hooks]]\nevent = "%s"\ncommand = "%s"\ntimeout = 5\n' "$ev" "$cmd"
+  done
+  printf '# <<< tokenlings\n'
+}
+# Grok and OpenCode: a file of our own.
+grok_file() {
+  json_merge /dev/null grok "$1"
+}
+opencode_file() {
+  sed -e "s|@HOOK@|$HOOK|g" -e "s|@PET@|$1|g" "$PLUGIN/integrations/opencode/tokenlings.js"
+}
+
+# ---- writing, with a diff, a yes and a backup
+backup() {
+  [ -f "$1" ] || return 0
+  dir="$STATE/backups/$(date +%Y%m%d-%H%M%S)"
+  mkdir -p -m 700 "$dir" || die "cannot create $dir"
+  cp -p "$1" "$dir/$2-$(basename "$1")" && say "backup: $dir/$2-$(basename "$1")"
+}
+# The change as a unified diff (or the whole file when it is new).
+show_diff() {  # show_diff <file> <new>
+  if [ -f "$1" ]; then diff -u "$1" "$2" | sed '1,2s|'"$2"'|(new)|'; else printf '(new file)\n'; cat "$2"; fi
+}
+apply() {  # apply <file> <new content file> <provider> <yes> <dry>
+  file=$1 new=$2 prov=$3 yes=$4 dry=$5
+  say "file: $file"
+  if [ -f "$file" ] && cmp -s "$file" "$new"; then
+    say "already up to date."
+    [ $JSON = 1 ] && jq -cn --arg f "$file" '{ ok: true, file: $f, changed: false, written: false }'
+    return 0
+  fi
+  if [ $JSON = 1 ]; then
+    if [ "$dry" = 1 ]; then jq -cn --arg f "$file" --arg d "$(show_diff "$file" "$new")" '{ ok: true, file: $f, changed: true, written: false, diff: $d }'; return 0; fi
+    [ "$yes" = 1 ] || die "with --json, pass --yes to write (or --dry-run to see the change)"
+  else
+    show_diff "$file" "$new"
+    [ "$dry" = 1 ] && { say "dry run: nothing written."; return 0; }
+    if [ "$yes" != 1 ]; then
+      printf 'Write this change? [y/N] '
+      read -r answer < /dev/tty 2>/dev/null || answer=""
+      case "$answer" in y|Y|yes|YES) ;; *) say "nothing written."; return 1 ;; esac
+    fi
+  fi
+  [ -L "$file" ] && die "$file is a symlink; not writing through it"
+  backup "$file" "$prov"
+  mkdir -p "$(dirname "$file")" || die "cannot create $(dirname "$file")"
+  tmp="$file.tokenlings.$$"
+  cat "$new" > "$tmp" || die "cannot write $tmp"
+  [ -f "$file" ] && chmod --reference="$file" "$tmp" 2>/dev/null
+  mv -f "$tmp" "$file" || die "cannot replace $file"
+  say "written."
+  if [ "$prov" = codex ]; then
+    if [ "$(dirname "$file")" = "$HOME/.codex" ]; then say "One more step: Codex runs new hooks only once you trust them. Run codex, then /hooks, and trust the Tokenlings entries."
+    else say "One more step for this account: Codex runs new hooks only once you trust them. Run CODEX_HOME=$(dirname "$file") codex, then /hooks, and trust the Tokenlings entries."; fi
+  fi
+  [ "$prov" = gemini ] && say "Gemini CLI runs hooks only when they are enabled in its settings."
+  [ $JSON = 1 ] && jq -cn --arg f "$file" --arg p "$prov" '{ ok: true, file: $f, changed: true, written: true, provider: $p }'
+  return 0
+}
+
+hooks_install() {
+  need_jq
+  prov="" pet="" dir="" yes=0 dry=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --pet) pet=$2; shift 2 ;; --config-dir) dir=$2; shift 2 ;; --yes|-y) yes=1; shift ;; --dry-run) dry=1; shift ;;
+      -*) die "unknown option $1" ;; *) prov=$1; shift ;;
+    esac
+  done
+  file=$(target_file "$prov" "$dir") || die "unknown provider '$prov' (claude codex grok kimi opencode muse gemini)"
+  case "$dir" in "~"/*) dir="$HOME/${dir#\~/}"; file=$(target_file "$prov" "$dir") ;; esac
+  valid_id "$pet" || die "--pet <id> is required (a-z 0-9 _ -, as in pets.json)"
+  [ -x "$HOOK" ] || die "$HOOK is missing or not executable"
+  ACCOUNT=$(account_of "$prov" "$file")
+  new=$(mktemp) || die "mktemp failed"
+  trap 'rm -f "$new"' EXIT
+  case "$prov" in
+    claude|muse|gemini) json_merge "$file" "$prov" "$pet" > "$new" || die "could not read $file as JSON" ;;
+    codex) codex_merge "$file" "$pet" > "$new" || die "could not read $file as JSON" ;;
+    kimi) toml_merge "$file" "$pet" > "$new" ;;
+    grok) grok_file "$pet" > "$new" ;;
+    opencode) opencode_file "$pet" > "$new" ;;
+  esac
+  apply "$file" "$new" "$prov" "$yes" "$dry"
+}
+
+hooks_uninstall() {
+  need_jq
+  prov="" dir="" yes=0 dry=0
+  while [ $# -gt 0 ]; do
+    case "$1" in --config-dir) dir=$2; shift 2 ;; --yes|-y) yes=1; shift ;; --dry-run) dry=1; shift ;; -*) die "unknown option $1" ;; *) prov=$1; shift ;; esac
+  done
+  case "$dir" in "~"/*) dir="$HOME/${dir#\~/}" ;; esac
+  file=$(target_file "$prov" "$dir") || die "unknown provider '$prov'"
+  [ -f "$file" ] || { say "nothing to remove: $file does not exist."; [ $JSON = 1 ] && jq -cn --arg f "$file" '{ ok: true, file: $f, changed: false }'; return 0; }
+  case "$prov" in
+    grok|opencode)
+      grep -q "$MARK" "$file" || { say "nothing to remove."; [ $JSON = 1 ] && jq -cn --arg f "$file" '{ ok: true, file: $f, changed: false }'; return 0; }
+      say "file: $file (ours; removed whole)"
+      if [ "$dry" = 1 ]; then
+        if [ $JSON = 1 ]; then jq -cn --arg f "$file" --arg d "$(printf '(the whole file is removed)\n'; sed 's/^/-/' "$file")" '{ ok: true, file: $f, changed: true, written: false, diff: $d }'
+        else sed 's/^/-/' "$file"; say "dry run: nothing removed."; fi
+        return 0
+      fi
+      [ $JSON = 1 ] && [ "$yes" != 1 ] && die "with --json, pass --yes to remove"
+      if [ "$yes" != 1 ]; then printf 'Remove it? [y/N] '; read -r a < /dev/tty 2>/dev/null || a=""; case "$a" in y|Y|yes) ;; *) say "nothing removed."; return 1 ;; esac; fi
+      backup "$file" "$prov"; rm -f "$file"; say "removed."
+      [ $JSON = 1 ] && jq -cn --arg f "$file" '{ ok: true, file: $f, removed: true }'
+      return 0 ;;
+  esac
+  new=$(mktemp) || die "mktemp failed"
+  trap 'rm -f "$new"' EXIT
+  case "$prov" in
+    claude|muse|gemini) json_strip "$file" > "$new" || die "could not read $file as JSON" ;;
+    codex) codex_strip "$file" > "$new" || die "could not read $file as JSON" ;;
+    kimi) toml_strip "$file" > "$new" ;;
+  esac
+  apply "$file" "$new" "$prov" "$yes" "$dry"
+}
+
+# Which pet each provider's hooks drive, per config folder we know of:
+# "provider<TAB>file<TAB>pet pet…" lines.
+hooks_status_raw() {
+  # account folders named in pets.json count too (they may live anywhere)
+  extra=""
+  if [ -f "$CONFIG" ] && [ ! -L "$CONFIG" ] && [ "$(wc -c < "$CONFIG")" -le 262144 ]; then
+    extra=$(jq -r '.pets[]? | select(type == "object" and (.account.configDir | type) == "string") | "\(.provider // "")\t\(.account.configDir)"' "$CONFIG" 2>/dev/null | head -n 64)
+  fi
+  for prov in claude codex grok kimi opencode muse gemini; do
+    dirs=""
+    case "$prov" in claude) for d in "$HOME"/.claude*; do [ -d "$d" ] && dirs="$dirs $d"; done ;; codex) for d in "$HOME"/.codex*; do [ -d "$d" ] && dirs="$dirs $d"; done ;; esac
+    for d in $(printf '%s\n' "$extra" | awk -F '\t' -v p="$prov" '$1 == p { print $2 }' | sed "s|^~/|$HOME/|"); do
+      case " $dirs " in *" $d "*) ;; *) [ -d "$d" ] && dirs="$dirs $d" ;; esac
+    done
+    [ -n "$dirs" ] || dirs=" "
+    for d in $dirs; do
+      [ "$d" = " " ] && d=""
+      f=$(target_file "$prov" "$d")
+      pets=""
+      [ -f "$f" ] && [ ! -L "$f" ] && pets=$(head -c 1048576 "$f" | grep -o -- "--pet [a-z0-9_-]*" 2>/dev/null | sort -u | sed 's/--pet //' | tr '\n' ' ')
+      printf '%s\t%s\t%s\n' "$prov" "$f" "${pets% }"
+    done
+  done
+}
+hooks_status() {
+  if [ $JSON = 1 ] || [ "${1:-}" = --json ]; then
+    hooks_status_raw | jq -R -s 'split("\n") | map(select(length > 0) | split("\t") | { provider: .[0], file: .[1], pets: ((.[2] // "") | split(" ") | map(select(. != ""))) })'
+  else
+    hooks_status_raw | while IFS='	' read -r prov f pets; do
+      printf '%-9s %-46s %s\n' "$prov" "$f" "${pets:-—}"
+    done
+  fi
+}
+
+# Codex runs a hook only once it is trusted in that account's /hooks screen;
+# trust is kept per position in config.toml ([hooks.state."<file>:<event>:
+# <group>:<hook>"]). Prints "<ours> <untrusted> <disabled>" for one hooks.json.
+codex_trust() {  # codex_trust <hooks.json>
+  _hf=$1 _ct="$(dirname "$1")/config.toml"
+  [ -f "$_hf" ] && [ ! -L "$_hf" ] || { echo "0 0 0"; return 0; }
+  _keys=$(head -c 1048576 "$_hf" | jq -r --arg mark "$MARK" --arg f "$_hf" '
+    def ours: (.hooks // []) | any(.command? // "" | contains($mark));
+    (.hooks // {}) | to_entries[] | .key as $ev | (.value | to_entries[] | select(.value | ours) | .key) as $g
+    | "\($f):\($ev | gsub("(?<a>[a-z])(?<b>[A-Z])"; "\(.a)_\(.b)") | ascii_downcase):\($g):0"' 2>/dev/null)
+  _toml=""
+  [ -f "$_ct" ] && [ ! -L "$_ct" ] && _toml=$(head -c 1048576 "$_ct")
+  printf '%s\n' "$_toml" | awk -v keys="$_keys" '
+    BEGIN { n = split(keys, k, "\n"); for (i = 1; i <= n; i++) if (k[i] != "") { want[k[i]] = 1; ours++ } }
+    /^\[hooks\.state\."/ { cur = $0; sub(/^\[hooks\.state\."/, "", cur); sub(/"\][[:space:]]*$/, "", cur); if (cur in want) seen[cur] = 1; next }
+    /^\[/ { cur = ""; next }
+    cur != "" && /^[[:space:]]*enabled[[:space:]]*=[[:space:]]*false/ { if (cur in want) off[cur] = 1 }
+    END { u = 0; d = 0; for (x in want) { if (!(x in seen)) u++; if (x in off) d++ } printf "%d %d %d\n", ours, u, d }'
+}
+
+doctor() {
+  json=$JSON; [ "${1:-}" = --json ] && json=1
+  results=""
+  check() { results="$results$1	$2	$3
+"; }
+  [ -x "$HOOK" ] && check ok hook "$HOOK" || check fail hook "$HOOK missing or not executable"
+  command -v jq >/dev/null 2>&1 && check ok jq "$(command -v jq)" || check warn jq "missing: hooks still work, with less detail"
+  rt=${XDG_RUNTIME_DIR:-}
+  if [ -n "$rt" ] && [ -d "$rt/tokenlings/events" ]; then
+    n=$(ls "$rt/tokenlings/events" 2>/dev/null | wc -l)
+    check ok events "$rt/tokenlings/events ($n logs)"
+  else check info events "no events yet (none of your agents has run with hooks)"; fi
+  if [ -f "$CONFIG" ]; then
+    if jq -e . "$CONFIG" >/dev/null 2>&1; then check ok config "$CONFIG"; else check fail config "$CONFIG is not valid JSON"; fi
+  else check info config "no pets.json yet: one demo pet is shown"; fi
+  if command -v omarchy-shell >/dev/null 2>&1 && omarchy-shell tokenlings stats >/dev/null 2>&1; then check ok plugin "running"; else check warn plugin "not answering (is it enabled?)"; fi
+  wired=$(JSON=1 hooks_status 2>/dev/null | jq -r 'map(select(.pets | length > 0) | "\(.provider): \(.pets | join(","))") | join("; ")' 2>/dev/null)
+  check info hooks "${wired:-none installed}"
+  # Codex: are our hooks trusted in each account that has them?
+  for f in $(hooks_status_raw | awk -F '\t' '$1 == "codex" && $3 != "" { print $2 }'); do
+    set -- $(codex_trust "$f")
+    if [ "${1:-0}" -gt 0 ] && [ "${2:-0}" -gt 0 ]; then
+      run="CODEX_HOME=$(dirname "$f") codex"; [ "$(dirname "$f")" = "$HOME/.codex" ] && run="codex"
+      check warn codex "$2 of $1 hooks in $f are not trusted yet: run $run, then /hooks, and trust them"
+    elif [ "${3:-0}" -gt 0 ]; then
+      check warn codex "$3 of $1 hooks in $f are turned off in Codex's /hooks"
+    elif [ "${1:-0}" -gt 0 ]; then
+      check ok codex "$f: trusted (if you reinstalled since, Codex asks again in /hooks)"
+    fi
+  done
+  if [ $json = 1 ]; then
+    printf '%s' "$results" | jq -R -s 'split("\n") | map(select(length > 0) | split("\t") | { status: .[0], check: .[1], detail: .[2] })'
+  else
+    printf '%s' "$results" | while IFS='	' read -r st name detail; do printf '%-5s %-7s %s\n' "$st" "$name" "$detail"; done
+  fi
+}
+
+send_event() {  # event <pet> <event> [--tool CAT]
+  pet=${1:-} ev=${2:-} tool=""
+  shift 2 2>/dev/null || true
+  [ "${1:-}" = --tool ] && tool=${2:-}
+  valid_id "$pet" || die "usage: tokenlings event <pet> <event> [--tool CATEGORY]"
+  case "$ev" in ''|*[!A-Za-z0-9_.:-]*) die "event: letters, digits and _ . : -" ;; esac
+  case "$tool" in *[!A-Za-z0-9_]*) die "--tool: letters, digits and _" ;; esac
+  printf '{"session_id":"cli","hook_event_name":"%s","tool_name":"%s"}' "$ev" "$tool" | "$HOOK" --pet "$pet" --provider claude --event "$ev"
+  [ $JSON = 1 ] && jq -cn --arg p "$pet" --arg e "$ev" '{ ok: true, pet: $p, event: $e }'
+  return 0
+}
+
+# ---- talking to the running plugin
+ipc() { command -v omarchy-shell >/dev/null 2>&1 || die "omarchy-shell not found (is this Omarchy?)"; omarchy-shell tokenlings "$@"; }
+demo() {
+  state="" pet="all" seed=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --state) state=${2:-}; shift 2 ;; --pet) pet=${2:-}; shift 2 ;; --seed) seed=${2:-}; shift 2 ;;
+      -*) die "unknown option $1" ;; *) die "usage: tokenlings demo [--state STATE] [--pet PET] [--seed N]" ;;
+    esac
+  done
+  case "$state" in *[!a-z0-9.]*) die "--state: e.g. tool.edit, needs.0, done.long" ;; esac
+  case "$pet" in *[!a-z0-9_-]*) die "--pet: a pet id or index" ;; esac
+  case "$seed" in *[!0-9]*) die "--seed: a number" ;; esac
+  [ -n "$seed" ] && { r=$(ipc demo "seed $seed"); [ "$r" = ok ] || die "the plugin did not take the seed ($r)"; }
+  if [ -n "$state" ]; then r=$(ipc demo "state $state $pet"); else r=$(ipc demo "walk 1"); fi
+  [ "$r" = ok ] || die "the plugin says: $r"
+  if [ $JSON = 1 ]; then jq -cn --arg s "${state:-walk}" --arg p "$pet" '{ ok: true, state: $s, pet: $p }'; else say "ok"; fi
+}
+
+bench() {
+  [ -x "$PLUGIN/tools/bench.sh" ] || die "the bench needs tools/bench.sh (a development checkout)"
+  exec "$PLUGIN/tools/bench.sh" "$@"
+}
+
+# ---- removing Tokenlings: every hook we installed, then (with --purge) our files
+uninstall_all() {
+  purge=0
+  while [ $# -gt 0 ]; do case "$1" in --purge) purge=1; shift ;; --yes|-y) YES=1; shift ;; *) die "unknown option $1" ;; esac; done
+  need_jq
+  removed=""
+  hooks_status_raw | while IFS='	' read -r prov f pets; do
+    [ -n "$pets" ] || continue
+    case "$prov" in
+      claude|codex) d=$(dirname "$f") ;;
+      grok) d=$(dirname "$(dirname "$f")") ;;
+      opencode) d=$(dirname "$(dirname "$f")") ;;
+      *) d=$(dirname "$f") ;;
+    esac
+    say "== $prov ($f)"
+    hooks_uninstall "$prov" --config-dir "$d" ${YES:+--yes} </dev/null || true
+  done
+  if [ $purge = 1 ]; then
+    for d in "$CONFIG_DIR" "$STATE" "$CACHE" "${XDG_RUNTIME_DIR:-/nonexistent}/tokenlings"; do
+      [ -e "$d" ] || continue
+      [ -L "$d" ] && { say "skipped $d (a symlink)"; continue; }
+      if confirm "Delete $d?"; then rm -rf -- "$d" && say "deleted $d"; else say "kept $d"; fi
+    done
+  fi
+  say "Now remove the plugin: omarchy plugin remove io.github.aryaveer2103.tokenlings"
+  [ $JSON = 1 ] && jq -cn --argjson p $purge '{ ok: true, purged: ($p == 1) }'
+  return 0
+}
+
+case "${1:-}" in
+  list|ls) shift; pets_list "$@" ;;
+  add) shift; pets_add "$@" ;;
+  edit) shift; pets_edit "$@" ;;
+  rename) shift; pets_rename "$@" ;;
+  remove|rm) shift; pets_remove "$@" ;;
+  export) shift; card_export "$@" ;;
+  import) shift; card_import "$@" ;;
+  hooks)
+    shift
+    case "${1:-}" in
+      install) shift; hooks_install "$@" ;;
+      uninstall) shift; hooks_uninstall "$@" ;;
+      status) shift; hooks_status "$@" ;;
+      *) die "hooks install|uninstall|status" ;;
+    esac ;;
+  doctor) shift; doctor "$@" ;;
+  event) shift; send_event "$@" ;;
+  demo) shift; demo "$@" ;;
+  bench) shift; bench "$@" ;;
+  uninstall) shift; uninstall_all "$@" ;;
+  stats|reload) cmd=$1; shift; ipc "$cmd" ;;
+  ""|-h|--help|help) sed -n '2,27p' "$ME" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command '$1' (tokenlings help)" ;;
+esac
