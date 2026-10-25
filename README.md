@@ -124,7 +124,7 @@ tokenlings uninstall [--purge]
 
 ## Privacy and permissions
 
-- No network access, no credentials, no `sudo`, no packages, no services.
+- No network access, no credentials, no root privileges, no packages, no services.
 - Reads: its own config; small hook event files; `/proc` for agent process activity (only for pets that follow a process); the account variables of your running agents when it looks for accounts (first run, the Pets tab, **Find my agents**); Hyprland window and workspace state; battery and media-player status. Every file read is a regular file of yours with a size cap.
 - Writes: `~/.config/tokenlings/`, `~/.local/state/tokenlings/`, `$XDG_RUNTIME_DIR/tokenlings/`, and your agents' hook settings **only** when you approve a hook install.
 - Hook events record the event type, the kind of tool, a hashed session id, process ids and the name of the project folder (shown in tooltips only if you turn that on). Prompts, tool input and output, file contents and full paths are never stored.
