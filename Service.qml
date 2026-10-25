@@ -73,6 +73,8 @@ Scope {
   property var configWarnings: []
   property string configError: ""
   property string lastGoodText: ""
+  // what the last read of pets.json found: "" (not read yet) | file | missing | broken | refused
+  property string configState: ""
 
   // Every read goes through SafeFile (regular files of ours, capped; see
   // core/safe.mjs); the FileViews below only write.
@@ -127,6 +129,7 @@ Scope {
   property string configText: ""          // the file as last read (the panel edits this)
   function applyConfigText(text) {
     var r = Config.load(String(text), { home: home })
+    configState = r.ok ? "file" : "broken"
     if (r.ok) {
       configText = String(text)
       config = r.config
@@ -173,13 +176,14 @@ Scope {
   // ---- first run: no pets.json and never welcomed → the panel opens on Welcome
   readonly property string welcomedPath: stateDir + "/welcomed"
   property bool welcomed: true
+  property bool welcomedRead: false
   SafeFile {
     path: service.welcomedPath
     cap: 16
     watch: false
-    onLoaded: service.welcomed = true
-    onMissing: service.welcomed = false
-    onRefused: service.welcomed = true
+    onLoaded: { service.welcomed = true; service.welcomedRead = true }
+    onMissing: { service.welcomed = false; service.welcomedRead = true }
+    onRefused: { service.welcomed = true; service.welcomedRead = true }
   }
   FileView {
     id: welcomedFile
@@ -249,6 +253,109 @@ Scope {
     return { error: err, pets: made }
   }
 
+  // ---- first run, without the questions: a pet for every account found
+  // (backup-looking folders stay out; pets.json only). Only when pets.json is
+  // known to be missing (never over one that exists, or one still being
+  // read); Welcome then shows them and asks before connecting any agent.
+  property bool autoSetupRunning: false
+  property var setupResult: null                 // { pets } from the automatic first run
+  property bool setupSeen: false
+  property bool autoSetupTried: false            // once per shell start: no agents found, Welcome offers Bit
+  readonly property bool autoSetupDue: configState === "missing" && welcomedRead && !welcomed && !autoSetupTried
+  onAutoSetupDueChanged: if (autoSetupDue) autoSetupTimer.restart()
+  Timer {
+    id: autoSetupTimer
+    interval: 1200
+    onTriggered: {
+      if (!service.autoSetupDue) return
+      service.autoSetupTried = true
+      service.autoSetupRunning = true
+      service.scanAgents(function(list) {
+        var chosen = list.filter(function(c) { return c.selected !== false })
+        // still no pets.json (nothing wrote one while the scan ran)?
+        if (chosen.length && service.configState === "missing") {
+          var r = service.finishWelcome(chosen)
+          if (!r.error) service.setupResult = { pets: r.pets }
+        }
+        service.autoSetupRunning = false
+      })
+    }
+  }
+
+  // ---- hooks: which pets they drive (tokenlings hooks status), and, once the
+  // user said Connect all (settings.autoConnect), every pet without hooks
+  // connected (tokenlings hooks auto, once per hooks file)
+  property var hooked: ({})                      // pet id → [{ provider, file }]
+  property int hookedVersion: 0
+  function isHooked(id, provider) {
+    var list = hooked[id] || []
+    return list.some(function(e) { return !provider || e.provider === provider })
+  }
+  function refreshHooks() { if (hookStatus.running) hookStatus.again = true; else hookStatus.running = true }
+  Process {
+    id: hookStatus
+    property bool again: false
+    command: [service.pluginDir + "/bin/tokenlings", "hooks", "status", "--json"]
+    environment: service.cliEnv
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var list
+        try { list = JSON.parse(text) } catch (e) { return }
+        if (!Array.isArray(list)) return
+        var map = {}
+        list.forEach(function(e) {
+          (e.pets || []).forEach(function(id) { (map[id] = map[id] || []).push({ provider: String(e.provider), file: String(e.file) }) })
+        })
+        service.hooked = map
+        service.hookedVersion++
+      }
+    }
+    onExited: if (again) { again = false; running = true }
+  }
+  // the pets that could be connected: run again whenever that list changes
+  readonly property string autoConnectKey: configSource !== "file" ? "" : (config.pets || []).filter(function(p) { return p.enabled }).map(function(p) {
+    return p.id + "\t" + p.provider + "\t" + (p.account.configDir || "")
+  }).join("\n")
+  onAutoConnectKeyChanged: if (autoConnectKey !== "") { autoConnectTimer.restart(); usageStart.restart() }
+  readonly property bool autoConnectOn: settings.autoConnect === true
+  onAutoConnectOnChanged: if (autoConnectOn && autoConnectKey !== "") autoConnectTimer.restart()
+  Timer {
+    id: autoConnectTimer
+    interval: 1500
+    onTriggered: {
+      if (!service.settings.autoConnect) { service.refreshHooks(); return }
+      if (autoConnector.running) { restart(); return }
+      autoConnector.running = true
+    }
+  }
+  Process {
+    id: autoConnector
+    command: [service.pluginDir + "/bin/tokenlings", "hooks", "auto", "--json"]
+    environment: service.cliEnv
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var list
+        try { list = JSON.parse(text) } catch (e) { list = [] }
+        if (Array.isArray(list)) service.connectedNow(list.filter(function(e) { return e && e.status === "written" }))
+        service.refreshHooks()
+      }
+    }
+  }
+  // Agent settings were changed by automatic connecting: always say so, once.
+  function connectedNow(list) {
+    if (!list.length) return
+    var names = list.map(function(e) {
+      var p = (config.pets || []).filter(function(q) { return q.id === e.pet })[0]
+      return String(p ? p.name : e.pet).replace(/[&<>]/g, function(c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] }) + " → " + e.provider
+    })
+    var codex = list.some(function(e) { return e.provider === "codex" })
+    connectNote.command = ["notify-send", "-a", "Tokenlings", "-i", "dialog-information", "Tokenlings connected your agents",
+                           names.join(", ") + (codex ? ". Codex: run /hooks once in Codex and trust the Tokenlings entries." : ".")
+                           + " A backup of each file is in ~/.local/state/tokenlings/backups."]
+    connectNote.running = true
+  }
+  Process { id: connectNote }
+
   // ---- a pretend session for one pet (Connect → Send a test event)
   property var testSteps: []
   function testRun(id) {
@@ -287,6 +394,7 @@ Scope {
   // Something is at pets.json, but not a regular file of ours (a FIFO, a
   // device, another user's file): never read; the last good config stays.
   function applyRefused() {
+    configState = "refused"
     configError = "pets.json is not a regular file you own"
     if (configSource === "defaults") {
       var lg = Config.load(lastGoodSaved || "", { home: home })
@@ -295,6 +403,7 @@ Scope {
     toastConfigError()
   }
   function applyMissing() {
+    configState = "missing"
     config = Config.defaults()
     configSource = "defaults"
     configError = ""
@@ -443,7 +552,11 @@ Scope {
   function cloneCount(index) { return clones[index] ? clones[index].length : 0 }
 
   property int petGap: 2
-  function petSizeFor(thickness) { return Math.max(14, Math.round(Number(thickness || barSize) * 0.78)) }
+  // settings.petSize scales every pet against the bar's thickness (large: as
+  // thick as the bar; the pets sit on its edge, so they may stand out of it)
+  readonly property var petScales: ({ small: 0.78, medium: 0.9, large: 1, huge: 1.2 })
+  readonly property real petScale: petScales[settings.petSize] || 1
+  function petSizeFor(thickness) { return Math.max(14, Math.round(Number(thickness || barSize) * petScale)) }
   readonly property int slotWidth: pets.length * petSizeFor(barSize) + Math.max(0, pets.length - 1) * petGap
   // The slot a bar widget reserves: room for the pets that live on that bar.
   function slotWidthFor(home) {
@@ -777,9 +890,27 @@ Scope {
       var o = eng.offsetOf(explorer.index)
       if (o.x !== explorerOffset.x || o.y !== explorerOffset.y) explorerOffset = Qt.point(o.x, o.y)
     }
+    // something sliding along the bar: every display frame (the mover below)
+    moving = r.moving === true && !still
+    if (moving) { clock.stop(); return }
     if (r.due === Infinity) { clock.stop(); return }
     clock.interval = Math.max(Clock.frameInterval(fps), Math.round(r.due - now))
     clock.restart()
+  }
+  // A pet moving across the bar on the 24 fps clock lands on the display's
+  // 60 Hz in uneven steps (3, 2, 3 frames) of several pixels: at running
+  // speed that reads as stutter. While one moves, frames follow the display
+  // instead, at most about 60 a second; at rest it is the clock again.
+  property bool moving: false
+  property real lastMoveTick: 0
+  FrameAnimation {
+    running: service.moving && !service.paused && !service.hidden
+    onTriggered: {
+      var now = Date.now()
+      if (now - service.lastMoveTick < 12) return
+      service.lastMoveTick = now
+      service.tick()
+    }
   }
   // Something changed outside the clock (a clip started): tick now.
   function kick() { if (eng && !paused && !hidden) tick() }
@@ -796,6 +927,7 @@ Scope {
     for (var i = 0; i < r.writes.length; i++) { var p = pets[r.writes[i][0]]; if (p) p.state[r.writes[i][1]] = r.writes[i][2] }
     for (var j = 0; j < fxSlots.length; j++) fxSlots[j].kind = ""
     clock.stop()
+    moving = false
     trips = ({})
     explorer = null
     explorerShown = false
@@ -870,10 +1002,11 @@ Scope {
     var pet = pets[index]
     if (!pet || !home) return
     if (inside) {
-      home.showPetTooltip(tooltipFor(index))
+      home.showPetTooltip(tooltipFor(index), index)
+      refreshUsage(false)
       if (eng && !eng.current(index) && !dnd[pet.id]) interact(index, "hover")
     } else {
-      home.hidePetTooltip()
+      home.hidePetTooltip(index)
       if (eng) { eng.lookAt(index, null, null); kick() }
     }
   }
@@ -894,14 +1027,63 @@ Scope {
     pokes[pet.id] = list
     if (list.length === 3) { evolveFor(index, 60000) }
     if (list.length >= 5) { pokes[pet.id] = []; interact(index, "grump"); return }
-    if (list.length > 1) return
+    if (list.length > 1) { usageOpener.stop(); return }    // a double or triple click: no panel
     if (dnd[pet.id]) return
-    // onClick: focus (Phase 5 wires terminal focus; until then a happy jump), jump, panel, none
+    if (home) home.hidePetTooltip()
+    // onClick: usage, focus, jump, panel, none. A pet that needs you goes to
+    // its terminal whatever it is set to.
     var onClick = pet.pet.onClick
     if (onClick === "panel") { if (home) home.open(); return }
     if (onClick === "none") return
-    if (onClick === "focus" && focusPet(index)) { interact(index, "follow"); return }
-    interact(index, onClick === "focus" && brain && brain.describe(index).sessions > 0 ? "shrug" : "click")
+    var d = brain ? brain.describe(index) : null
+    if ((onClick === "focus" || (d && d.state === "needs")) && focusPet(index)) { interact(index, "follow"); return }
+    if (onClick === "usage") {
+      interact(index, "click")
+      usageOpener.petIndex = index
+      usageOpener.home = home
+      usageOpener.restart()
+      return
+    }
+    interact(index, onClick === "focus" && d && d.sessions > 0 ? "shrug" : "click")
+  }
+  // ---- a click shows the pet's usage: Omarchy's Agents panel on its tab
+  // (`select <pet id>`, then `select <provider>`: tabs a patched Agents panel
+  // has), else the panel as it is (`open`), else this plugin's panel on the
+  // pet, which has its limits. A moment after the click, so a double click
+  // stays a signature move.
+  Timer {
+    id: usageOpener
+    property int petIndex: -1
+    property var home: null
+    interval: 320
+    onTriggered: {
+      var p = service.pets[petIndex]
+      if (!p) return
+      agentsPanel.home = home
+      agentsPanel.petId = p.id
+      agentsPanel.command = ["sh", "-c",
+        'r=$(omarchy-shell omarchy.agents select "$1" 2>&1)\n' +
+        '[ "$r" = ok ] && exit 0\n' +
+        'if [ "$r" = unknown ]; then r=$(omarchy-shell omarchy.agents select "$2" 2>&1); [ "$r" = ok ] && exit 0; fi\n' +
+        // no Agents panel at all (a stock one answers "Function not found." to select: it opens)
+        'case "$r" in *"Target not found"*|*"command not found"*|*"No such file"*) exit 3 ;; esac\n' +
+        'r=$(omarchy-shell omarchy.agents open 2>&1)\n' +
+        'case "$r" in *"Target not found"*|*"Function not found"*|*"command not found"*|*"No such file"*) exit 3 ;; esac\n' +
+        'exit 0',
+        "sh", p.id, p.provider]
+      agentsPanel.running = true
+    }
+  }
+  Process {
+    id: agentsPanel
+    property var home: null
+    property string petId: ""
+    environment: service.cliEnv
+    onExited: function(code) {
+      if (code === 0) return
+      var h = home || service.homes[service.mainHome]
+      if (h) h.openPage("pets", petId)
+    }
   }
   function doubleClickPet(index) {
     var pet = pets[index]
@@ -1220,8 +1402,116 @@ Scope {
       if (d.sessions > 1) bits.push(d.sessions + " sessions")
       if (settings.showCwd && d.cwd) bits.push(d.cwd)
     }
+    var lim = limitsText(pet.id)
+    if (lim) bits.push(lim)
     return bits.join(" · ")
   }
+
+  // ---- account limits: Omarchy's own usage collectors (the ones its Agents
+  // panel runs), one account at a time: the pet's account folder in the
+  // provider's variable, and a cache of its own so two accounts' limits
+  // never mix. Only the limits, the plan and the status are kept.
+  readonly property var limitVars: ({ claude: "CLAUDE_CONFIG_DIR", codex: "CODEX_HOME", grok: "GROK_HOME", kimi: "KIMI_CODE_HOME" })
+  readonly property string collectorPrefix: (Quickshell.env("OMARCHY_PATH") || "/usr/share/omarchy") + "/bin/omarchy-agent-usage-"
+  readonly property string usageCache: (Quickshell.env("XDG_CACHE_HOME") || home + "/.cache") + "/tokenlings/usage"
+  readonly property int usageEveryMs: 5 * 60 * 1000
+  property var usage: ({})                       // pet id → { limits: [{ label, percent, resetsAt }], plan, stale, status, at }
+  property int usageVersion: 0
+  function usageFor(id) { return settings.usageLimits ? (usage[id] || null) : null }
+  function limitName(label) {
+    var l = String(label || "").toLowerCase()
+    var extra = (l.match(/\(([^)]*)\)/) || ["", ""])[1]
+    if (/\d/.test(extra)) extra = ""             // "(5-hour)", "(7-day)": the window, already in the name
+    var base = /week|7.?day/.test(l) ? "weekly" : /session|5.?h/.test(l) ? "session" : /month/.test(l) ? "monthly" : l.replace(/\(.*\)/g, "").trim()
+    return ((base || "limit") + (extra ? " " + extra.trim() : "")).slice(0, 24)
+  }
+  function spanText(ms) {
+    var m = Math.max(1, Math.round(ms / 60000))
+    if (m < 60) return m + "m"
+    var h = Math.round(m / 60)
+    return h < 48 ? h + "h" : Math.round(h / 24) + "d"
+  }
+  // "session 12% · weekly 49%"; a reset time once a window is nearly used up
+  function limitsText(id) {
+    var u = usageFor(id)
+    if (!u) return ""
+    if (!u.limits.length) return u.status ? u.status.toLowerCase() : ""
+    var now = Date.now()
+    return u.limits.map(function(l) {
+      var t = l.label + " " + Math.round(l.percent * 100) + "%"
+      if (l.percent >= 0.8 && l.resetsAt > now) t += " (resets in " + spanText(l.resetsAt - now) + ")"
+      return t
+    }).join(" · ") + (u.stale ? " (last known)" : "")
+  }
+  function canCollect(p) { return !!p && limitVars[p.provider] !== undefined && p.enabled !== false }
+  property var usageQueue: []
+  function refreshUsage(force) {
+    if (!settings.usageLimits || cast) return
+    var now = Date.now(), want = usageQueue.slice()
+    ;(config.pets || []).forEach(function(p) {
+      if (!service.canCollect(p) || want.indexOf(p.id) !== -1) return
+      var u = service.usage[p.id]
+      if (force || !u || now - u.at > 60000) want.push(p.id)
+    })
+    usageQueue = want
+    nextUsage()
+  }
+  function nextUsage() {
+    if (collector.running || !usageQueue.length) return
+    var id = usageQueue[0]
+    usageQueue = usageQueue.slice(1)
+    var p = (config.pets || []).filter(function(q) { return q.id === id })[0]
+    if (!canCollect(p)) { nextUsage(); return }
+    // the default folder goes unnamed: the collector then finds it itself
+    // (Kimi's falls back to its legacy home only when none is named)
+    var dir = Accounts.petDir(p, home)
+    if (dir === Accounts.defaultDir(p.provider, home)) dir = ""
+    collector.petId = id
+    collector.command = ["sh", "-c",
+      'c="$1" v="$2" d="$3" k="$4"; [ -x "$c" ] || exit 3; mkdir -p -m 700 "$k" || exit 4\n' +
+      'if [ -n "$d" ]; then env "$v=$d" XDG_CACHE_HOME="$k" "$c" --limits-only; else env -u "$v" XDG_CACHE_HOME="$k" "$c" --limits-only; fi 2>/dev/null | head -c 262144',
+      "sh", collectorPrefix + p.provider, limitVars[p.provider], dir, usageCache + "/" + id]
+    collector.running = true
+  }
+  Process {
+    id: collector
+    property string petId: ""
+    environment: service.cliEnv
+    stdout: StdioCollector { onStreamFinished: service.readUsage(collector.petId, text) }
+    onExited: Qt.callLater(service.nextUsage)
+  }
+  function readUsage(id, text) {
+    var r
+    try { r = JSON.parse(String(text || "")) } catch (e) { return }
+    if (!r || typeof r !== "object") return
+    var limits = (Array.isArray(r.limits) ? r.limits : []).filter(function(l) { return l && isFinite(Number(l.percent)) }).slice(0, 6).map(function(l) {
+      return { label: service.limitName(l.label), percent: Math.max(0, Math.min(9.99, Number(l.percent))), resetsAt: Date.parse(String(l.resetsAt || "")) || 0 }
+    })
+    var u = { limits: limits, plan: String(r.tierLabel || "").slice(0, 24), stale: r.limitsStale === true,
+              status: String(r.usageStatusText || "").slice(0, 60), at: Date.now() }
+    var before = usage[id]
+    var next = Object.assign({}, usage)
+    next[id] = u
+    usage = next
+    usageVersion++
+    if (!before) return
+    // a window used up, or one that was nearly used up starting over: the pet shows it
+    var was = {}
+    before.limits.forEach(function(l) { was[l.label] = l.percent })
+    var hit = limits.some(function(l) { return l.percent >= 1 && was[l.label] !== undefined && was[l.label] < 1 })
+    var reset = limits.some(function(l) { return was[l.label] !== undefined && was[l.label] >= 0.8 && l.percent <= was[l.label] - 0.5 })
+    if (hit) agentEvent({ pet: id, event: "usage.exhausted", session: "usage" })
+    else if (reset) agentEvent({ pet: id, event: "usage.reset", session: "usage" })
+  }
+  Timer {
+    interval: service.usageEveryMs
+    running: service.settings.usageLimits === true
+    repeat: true
+    onTriggered: if (!service.userIdle) service.refreshUsage(true)
+  }
+  // soon after the pets are known, and when one is added or its account changes
+  // (autoConnectKey's handler starts it)
+  Timer { id: usageStart; interval: 4000; onTriggered: service.refreshUsage(false) }
 
   // ---- the brain: what every pet does next (core/brain.mjs)
   property var brain: null
@@ -1426,6 +1716,9 @@ Scope {
       userIdle: userIdle,
       barPosition: barPosition,
       configSource: configSource,
+      petScale: petScale,
+      usage: usage,
+      hooked: hooked,
       theme: theme,
       labels: labels,
       uptimeSec: Math.round((now - startedAt) / 1000),

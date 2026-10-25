@@ -8,9 +8,11 @@ import "qml/panel"
 // the top row), Left/Right changes the row under the cursor or switches tabs,
 // Enter activates, 1–5 jump to a tab, Escape closes.
 //
-// Nothing here writes on its own: pets.json changes go through the service
-// (checked by the config loader before writing), agent configs only through
-// the hook installer after its diff has been shown and confirmed.
+// pets.json changes go through the service (checked by the config loader
+// before writing) and apply as they are made. Agent configs change through
+// the hook installer: after its diff has been shown and confirmed, or, once
+// the user has said Connect all (settings.autoConnect), by the service for
+// every pet without hooks (tokenlings hooks auto).
 Panel {
   id: root
   moduleName: "io.github.aryaveer2103.tokenlings"
@@ -48,6 +50,8 @@ Panel {
     if (service.welcomePending) page = "welcome"
     if (!selectedPet && service.configPets().length) selectedPet = service.configPets()[0].id
     cursor = -1
+    service.refreshHooks()
+    service.refreshUsage(false)
   }
 
   // ---- the keyboard cursor: rows are the page's controls, in reading order
@@ -119,7 +123,7 @@ Panel {
     say("checking " + title + "…")
     cli(dryArgs, function(r) {
       if (!r || !r.ok) { say((r && r.error) || "the installer could not run"); return }
-      if (!r.changed) { say("already set up: " + r.file); if (after) after(r); return }
+      if (!r.changed) { say("already set up: " + r.file); service.refreshHooks(); if (after) after(r); return }
       if (!ui) return
       var diff = ui.diff
       diff.title = title
@@ -127,6 +131,7 @@ Panel {
       diff.text = r.diff || ""
       diff.confirmAction = function() {
         cli(applyArgs, function(w) {
+          service.refreshHooks()
           say(w && w.ok ? "written: " + w.file + (w.provider === "codex" ? " — in Codex, run /hooks once to trust them" : "") : ((w && w.error) || "nothing written"))
           if (after) after(w)
         })

@@ -4,6 +4,56 @@ All notable changes to Tokenlings. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-10-26
+
+### Added
+- Account limits: hover a pet to see its account's session and weekly usage
+  ("session 21% · weekly 50%", with the reset time once a window is nearly
+  used up). The **Pets** tab shows a meter per limit, the plan and when each
+  resets. Read with Omarchy's own usage collectors, one account at a time
+  with a cache of its own, every 5 minutes while you are at the computer.
+  Claude Code, Codex, Grok and Kimi. A pet slumps when a limit runs out and
+  cheers when one resets. **Behaviour → Account limits** turns it off.
+- Setup in one click: on first run Tokenlings makes a pet for every agent
+  account it finds (pets.json only), and Welcome offers **Connect all my
+  agents**: one yes connects every pet to its agent (a backup of every file it
+  changes, and a notification naming them) and turns on **Behaviour → Connect
+  new pets to their agents automatically**, so pets added later are connected
+  too. Each hooks file is connected automatically once, so hooks you remove
+  stay removed. Nothing touches an agent's settings before that yes.
+  `tokenlings hooks auto` does the same from a terminal.
+- **Behaviour → Pet size**: Small, Medium, Large (as thick as the bar) or Huge.
+- Click a pet to see its usage: Omarchy's Agents panel opens on that agent's
+  tab (on the panel as it is when it has no tabs; on the pet's card in the
+  Tokenlings panel when there is no Agents panel). A pet that needs you still
+  takes you to its terminal. It is the new default click (**Edit → Click →
+  Show its usage**).
+
+### Fixed
+- Hovering and clicking the pets did nothing, or opened the Tokenlings panel,
+  whenever the bar had started after them: the bar's surface sat above the
+  pets' and took the pointer. The pets now live on the overlay layer.
+- Tooltips never showed: the bar shows one only while its target says it is
+  hovered, and the pets' slot never did. Moving from one pet to the next no
+  longer leaves the first one's tooltip up or hides the second's.
+- A pet that leaned, hopped or bounced slid its pointer area out from under a
+  still pointer, restarting the hover animation over a click's.
+- Running pets jumped: at the start of each new animation away from their slot
+  they were drawn twice as far out for a moment, then snapped back. Running is
+  also smoother (frames follow the display while a pet moves, back to the
+  usual cap when it stops) and slower, and zoomies stay off other widgets.
+
+### Changed
+- Pets are bigger: Large, the new default, is as thick as the bar (they used
+  to be about three quarters of it).
+- The **Edit** and **Connect** tabs apply every change as you make it, so the
+  pet on the bar follows each click; there is no Save. **Undo changes** puts
+  the pet back as it was when you opened it.
+- A connected pet's **Connect**, **Install hooks…** and Welcome's **Connect…**
+  turn into a faded **✓ Connected**.
+- Backups of agent settings carry the account folder in their name, so two
+  accounts backed up in the same second no longer overwrite each other.
+
 ## [1.0.0] - 2026-10-25
 
 First public release.

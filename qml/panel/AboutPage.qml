@@ -23,9 +23,9 @@ Item {
   onServiceChanged: if (service) check()
 
   readonly property var privacy: [
-    "No network access, no credentials, no sudo, no packages, no services.",
+    "No network access of its own, no credentials, no sudo, no packages, no services. Account limits come from Omarchy's own usage collectors, which ask the provider with the agent's sign-in (Behaviour → Account limits turns them off).",
     "Reads: pets.json; the small event files its own hook writes; /proc for agent processes (only for pets set to follow a process); Hyprland windows and workspaces; battery and media-player status.",
-    "Writes: ~/.config/tokenlings, ~/.local/state/tokenlings, $XDG_RUNTIME_DIR/tokenlings, and an agent's hook settings only after you confirm the change shown.",
+    "Writes: ~/.config/tokenlings, ~/.local/state/tokenlings, ~/.cache/tokenlings, $XDG_RUNTIME_DIR/tokenlings, and an agent's hook settings only on your yes: Connect all my agents (and new pets after it, once per file, backed up, with a notification; Behaviour turns it off), or a change you confirm after seeing it.",
     "Hook events keep the event type, the kind of tool, a hashed session id, process ids and the project folder's name. Never prompts, tool input or output, file contents or full paths."
   ]
 

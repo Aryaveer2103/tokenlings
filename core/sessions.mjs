@@ -33,6 +33,8 @@ export function createSessions() {
     const at = Number(ev.at) || 0
     const p = petOf(ev.pet)
     const sid = String(ev.session || "default")
+    // the account's limits, not a session: nothing to track
+    if (ev.event === "usage.exhausted" || ev.event === "usage.reset") return { pet: ev.pet, session: sid, kind: ev.event, at }
     let s = p.sessions[sid]
     if (!s) {
       if (ev.event === "session.end") return null

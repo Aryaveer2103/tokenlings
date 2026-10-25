@@ -14,20 +14,21 @@ Animated pets for your AI coding agents, living in the Omarchy bar. One pet per 
 - **Fully customisable:** body, eyes, mouth, hair, accessories, colours (or follow your Omarchy theme), personality and signature move. Every provider starts from its own base form.
 - **A social life:** high-fives when two agents finish together, cheer squads, chases, catch, naps in a pile.
 - **Roaming:** strolls and zoomies along the bar (they hop over the other widgets and sit on its edge), drag-and-fling physics, and, if you turn it on, short trips onto your windows.
+- **Account limits at a glance:** hover a pet to see how much of its account's session and weekly limits are used ("session 21% · weekly 50%"); click it to open Omarchy's Agents panel on that agent's usage; the **Pets** tab shows a meter for each, with the plan and when it resets. A pet slumps when a limit runs out and cheers when it resets. Works for Claude Code, Codex, Grok and Kimi, every account on its own.
 - **Battery-aware:** no animation frames while resting, calm idle animation, and an automatic Battery mode on battery power (no roaming).
-- **Private:** no network access, no credentials, and it never stores your prompts or code.
+- **Private:** no network access of its own, no credentials, and it never stores your prompts or code.
 
 ## Supported agents
 
 | Agent | How the pet knows | What it shows | Verified |
 |---|---|---|---|
-| Claude Code | Lifecycle hooks (opt-in) | Everything: working, tool type, needs you, done | Live, two accounts |
-| Codex CLI | Lifecycle hooks (opt-in) | Everything | Live hook events; the full flow against recorded sessions |
-| Grok Build | Lifecycle hooks (opt-in) | Everything | Live, two Grok homes (against a local test model) |
-| Kimi Code | Lifecycle hooks (opt-in) | Everything | Live (against a local test model) |
-| Muse | Lifecycle hooks (opt-in) | Everything | Live (its offline echo provider) |
-| Gemini CLI | Lifecycle hooks (opt-in) | Everything | Recorded sessions only |
-| OpenCode | Plugin (opt-in) | Everything | Recorded sessions only |
+| Claude Code | Lifecycle hooks | Everything: working, tool type, needs you, done; account limits | Live, two accounts |
+| Codex CLI | Lifecycle hooks | Everything; account limits | Live hook events; the full flow against recorded sessions |
+| Grok Build | Lifecycle hooks | Everything; account limits | Live, two Grok homes (against a local test model) |
+| Kimi Code | Lifecycle hooks | Everything; account limits | Live (against a local test model) |
+| Muse | Lifecycle hooks | Everything | Live (its offline echo provider) |
+| Gemini CLI | Lifecycle hooks | Everything | Recorded sessions only |
+| OpenCode | Plugin | Everything | Recorded sessions only |
 | Other terminal agents | Process activity (`process:<regex>`) | Busy or idle | Tests |
 | Desktop and web apps (ChatGPT, Claude, Antigravity, …) | Window presence (`window:<regex>`) | Asleep, awake or watching you (for browsers, only the active tab's title is visible) | Tests |
 
@@ -43,7 +44,7 @@ Omarchy 4 (Quattro) with `omarchy-shell`. Nothing else to install: at runtime To
 omarchy plugin add https://github.com/Aryaveer2103/tokenlings.git --enable
 ```
 
-On first run the Tokenlings panel opens on **Welcome**. It looks for agent accounts and suggests one pet for each. Creating them writes only `~/.config/tokenlings/pets.json`. Connecting an agent is a separate yes, per agent, after you have seen the change.
+On first run Tokenlings finds your agent accounts and makes one pet for each (this writes only `~/.config/tokenlings/pets.json`). The panel then opens on **Welcome** with your pets and one button: **Connect all my agents**. That one click adds Tokenlings' hooks to every agent's settings (each file backed up first, and a notification names them) and turns on **Behaviour → Connect new pets to their agents automatically**, so pets you add later are connected too. Your agents' settings are never touched before that click. Rather see each change first? Use **Connect…** beside each pet instead. The one step left after connecting is Codex's own: see below.
 
 Move it on the bar:
 
@@ -53,13 +54,16 @@ omarchy bar move io.github.aryaveer2103.tokenlings --section right
 
 ## Connect an agent
 
-Open the Tokenlings panel (right-click a pet, or click the slot beside them), go to **Connect**, pick the pet and press **Install hooks…**. You see the exact file and the change before anything is written. A backup is saved to `~/.local/state/tokenlings/backups/`. **Send a test event** plays a short pretend session so you can see the pet react.
+Once you have said **Connect all my agents** (or turned on **Behaviour → Connect new pets to their agents automatically**), new pets are connected on their own. A connected pet shows a faded **✓ Connected** on **Pets** and **Connect**. Each hooks file is connected automatically only once: if you remove Tokenlings' hooks from it (**Connect → Remove hooks…**), they stay removed.
+
+To connect by hand: open the Tokenlings panel (right-click a pet, or click the slot beside them), go to **Connect**, pick the pet and press **Install hooks…**. You see the exact file and the change before anything is written. A backup is saved to `~/.local/state/tokenlings/backups/`. **Send a test event** plays a short pretend session so you can see the pet react.
 
 From a terminal:
 
 ```sh
 alias tokenlings="$HOME/.config/omarchy/plugins/io.github.aryaveer2103.tokenlings/bin/tokenlings"
 tokenlings hooks install claude --pet ember
+tokenlings hooks auto      # connect every pet that has no hooks yet
 tokenlings hooks status
 ```
 
@@ -91,7 +95,7 @@ How each event finds its pet: every agent names its account in its environment (
 
 ## Customise
 
-Use the **Edit** tab in the panel, or edit `~/.config/tokenlings/pets.json` (changes apply live; a broken file keeps the last good one in use and tells you once). With several monitors, a pet's **Lives on** setting picks its bar. Share a design with a friend:
+Use the **Edit** tab in the panel: every change shows on the bar as you click it, with nothing to save (**Undo changes** puts the pet back as it was when you opened it). Or edit `~/.config/tokenlings/pets.json` (changes apply live; a broken file keeps the last good one in use and tells you once). **Behaviour → Pet size** makes every pet smaller or bigger (Large, the default, is as thick as the bar). With several monitors, a pet's **Lives on** setting picks its bar. Share a design with a friend:
 
 ```sh
 tokenlings export ember      # prints a tkl1:… code
@@ -113,7 +117,7 @@ Roaming (stay home, along the bar, or bar and desktop trips), reduced motion, qu
 
 ```
 tokenlings list | add | edit | rename | remove
-tokenlings hooks install | uninstall | status
+tokenlings hooks install | uninstall | status | auto
 tokenlings doctor
 tokenlings demo [--state STATE] [--pet PET] [--seed N]
 tokenlings export | import
@@ -124,9 +128,9 @@ tokenlings uninstall [--purge]
 
 ## Privacy and permissions
 
-- No network access, no credentials, no root privileges, no packages, no services.
+- No network access of its own, no credentials, no root privileges, no packages, no services. Account limits come from Omarchy's own usage collectors (`omarchy-agent-usage-<agent> --limits-only`, what Omarchy's Agents panel runs), which ask the provider with that agent's sign-in; turn **Behaviour → Account limits** off and they never run.
 - Reads: its own config; small hook event files; `/proc` for agent process activity (only for pets that follow a process); the account variables of your running agents when it looks for accounts (first run, the Pets tab, **Find my agents**); Hyprland window and workspace state; battery and media-player status. Every file read is a regular file of yours with a size cap.
-- Writes: `~/.config/tokenlings/`, `~/.local/state/tokenlings/`, `$XDG_RUNTIME_DIR/tokenlings/`, and your agents' hook settings **only** when you approve a hook install.
+- Writes: `~/.config/tokenlings/`, `~/.local/state/tokenlings/`, `~/.cache/tokenlings/`, `$XDG_RUNTIME_DIR/tokenlings/`, and your agents' hook settings only when you say so: **Connect all my agents** (or the automatic-connect setting it turns on: once per file, with a backup and a notification), or a hook install you approve after seeing its diff.
 - Hook events record the event type, the kind of tool, a hashed session id, process ids and the name of the project folder (shown in tooltips only if you turn that on). Prompts, tool input and output, file contents and full paths are never stored.
 
 See [SECURITY.md](SECURITY.md) for the full list.
@@ -158,6 +162,7 @@ If you removed the plugin first, your agents keep working: every hook checks tha
 
 - `tokenlings doctor` checks config, hooks and permissions (including Codex trust) and says what to fix.
 - Shell logs: `qs log -p "$OMARCHY_PATH/shell" --tail 100`
+- No limits in the tooltip: the agent has to be signed in on that account (a pet whose agent's sign-in lapsed says "limits paused" until the agent runs again). Claude Code, Codex, Grok and Kimi report limits; other agents do not.
 - A pet never wakes up: run `tokenlings hooks status`, then `tokenlings demo --state tool.edit --pet <id>` to confirm the pet itself works, or use **Send a test event** in the panel.
 - Two pets react to one session: reinstall the hooks of both accounts (**Connect → Install hooks…**) so each hook knows its account folder.
 

@@ -82,6 +82,26 @@
         "progression": {
           "type": "boolean",
           "default": true
+        },
+        "petSize": {
+          "enum": [
+            "small",
+            "medium",
+            "large",
+            "huge"
+          ],
+          "default": "large",
+          "description": "How big every pet is, against the bar's thickness (each pet's own size scales this)."
+        },
+        "usageLimits": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show each account's limits (session, weekly) in tooltips and the Pets tab, read with Omarchy's usage collectors."
+        },
+        "autoConnect": {
+          "type": "boolean",
+          "default": false,
+          "description": "Install hooks for new pets without asking (Welcome's Connect all my agents turns this on). Each hooks file is connected automatically once; hooks you remove stay removed."
         }
       }
     },
@@ -367,7 +387,9 @@
             "description": "Double-click plays it. Older names (thoughtfulSpin, moonwalk, twinJump, longStretch, prank, diveRoll) are read as their successors."
           },
           "onClick": {
+            "description": "usage: the account's usage (Omarchy's Agents panel on its tab, else this plugin's panel); focus: its agent's terminal; a pet that needs you always focuses its terminal.",
             "enum": [
+              "usage",
               "focus",
               "jump",
               "panel",

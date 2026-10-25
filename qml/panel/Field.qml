@@ -14,7 +14,8 @@ import qs.Ui
 //   chips     several options, each on or off (accessories): Left/Right
 //             moves along them, Enter flips the one under the cursor
 //   swatches  colour presets plus "#RRGGBB" text: Left/Right picks a preset
-//   buttons   a row of actions: Left/Right picks one, Enter runs it
+//   buttons   a row of actions: Left/Right picks one, Enter runs it; an
+//             option with dim: true is done already (Connected), drawn faded
 //   info      a value to read, nothing to change
 Item {
   id: field
@@ -188,10 +189,12 @@ Item {
           readonly property var v: field.optValue(modelData)
           readonly property bool on: field.kind === "chips" ? field.has(v) : field.kind === "swatches" ? String(field.value).toUpperCase() === String(v).toUpperCase() : false
           readonly property bool cur: field.hasCursor && field.sub === index
+          readonly property bool dim: modelData !== null && typeof modelData === "object" && modelData.dim === true
+          opacity: dim ? 0.45 : 1
           width: field.kind === "swatches" ? 20 : chipText.implicitWidth + 14
           height: field.kind === "swatches" ? 20 : Style.spacing.controlHeight - 6
           radius: field.kind === "swatches" ? 10 : Style.cornerRadius
-          color: field.kind === "swatches" ? String(v) : (on ? Style.selectedFillFor(field.foreground, field.accent) : (cur || chipMouse.containsMouse ? Style.hoverFillFor(field.foreground, field.accent) : Style.normalFillFor(field.foreground, field.accent)))
+          color: field.kind === "swatches" ? String(v) : dim ? "transparent" : (on ? Style.selectedFillFor(field.foreground, field.accent) : (cur || chipMouse.containsMouse ? Style.hoverFillFor(field.foreground, field.accent) : Style.normalFillFor(field.foreground, field.accent)))
           border.width: cur || on ? 2 : 1
           border.color: cur ? field.accent : (on ? field.foreground : Qt.rgba(field.foreground.r, field.foreground.g, field.foreground.b, 0.25))
           Text {
@@ -209,7 +212,7 @@ Item {
             id: chipMouse
             anchors.fill: parent
             hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
+            cursorShape: parent.dim ? Qt.ArrowCursor : Qt.PointingHandCursor
             onEntered: field.sub = parent.index
             onClicked: {
               field.sub = parent.index

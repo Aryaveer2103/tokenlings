@@ -40,6 +40,15 @@ Item {
     Field { kind: "info"; label: "Now"; foreground: page.fg; fontFamily: page.fontFamily
             value: page.service ? page.service.power + " · " + page.service.fps + " fps cap" + (page.service.onBattery ? " · on battery" : "") : "" }
 
+    PanelSectionHeader { text: "Size"; foreground: page.fg; fontFamily: page.fontFamily }
+    Field {
+      kind: "choice"; label: "Pet size"
+      foreground: page.fg; fontFamily: page.fontFamily
+      options: [{ value: "small", label: "Small" }, { value: "medium", label: "Medium" }, { value: "large", label: "Large (as thick as the bar)" }, { value: "huge", label: "Huge" }]
+      value: page.s.petSize
+      onChanged: function(v) { page.put("petSize", v, "pet size: " + v) }
+    }
+
     PanelSectionHeader { text: "Movement"; foreground: page.fg; fontFamily: page.fontFamily }
     Field {
       kind: "choice"; label: "Roaming"
@@ -71,6 +80,13 @@ Item {
     Field { kind: "text"; label: "To (HH:MM)"; max: 5; foreground: page.fg; fontFamily: page.fontFamily
             visible: page.s.quietHours && page.s.quietHours.enabled
             value: page.s.quietHours ? page.s.quietHours.to : ""; onChanged: function(v) { page.quiet({ to: String(v).trim() }) } }
+
+    PanelSectionHeader { text: "Agents"; foreground: page.fg; fontFamily: page.fontFamily }
+    Field { kind: "toggle"; label: "Account limits in tooltips and on Pets (Omarchy's usage check)"; foreground: page.fg; fontFamily: page.fontFamily
+            value: page.s.usageLimits === true
+            onChanged: function(v) { page.put("usageLimits", v); if (v) page.service.refreshUsage(true) } }
+    Field { kind: "toggle"; label: "Connect new pets to their agents automatically"; foreground: page.fg; fontFamily: page.fontFamily
+            value: page.s.autoConnect === true; onChanged: function(v) { page.put("autoConnect", v) } }
 
     PanelSectionHeader { text: "Privacy"; foreground: page.fg; fontFamily: page.fontFamily }
     Field { kind: "toggle"; label: "Notifications (pet name and state only)"; foreground: page.fg; fontFamily: page.fontFamily

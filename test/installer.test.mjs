@@ -126,3 +126,25 @@ test("status and doctor answer in JSON", () => {
   const doc = JSON.parse(cli(sb, ["doctor", "--json"]).stdout)
   assert.ok(doc.some(x => x.check === "hook" && x.status === "ok"))
 })
+
+test("hooks auto: connects pets without hooks once, never over a removal, skips agents that are not there", () => {
+  const sb = sandbox()
+  const claude = join(sb.env.HOME, ".claude"), work = join(sb.env.HOME, ".claude-work")
+  mkdirSync(claude); mkdirSync(work)
+  writeFileSync(join(claude, "settings.json"), JSON.stringify({ model: "x" }))
+  mkdirSync(join(sb.env.XDG_CONFIG_HOME, "tokenlings"), { recursive: true })
+  writeFileSync(join(sb.env.XDG_CONFIG_HOME, "tokenlings", "pets.json"), JSON.stringify({ version: 1, pets: [
+    { id: "ember", provider: "claude" }, { id: "work", provider: "claude", account: { configDir: "~/.claude-work" } },
+    { id: "slate", provider: "codex" }, { id: "off", provider: "claude", account: { configDir: "~/.claude-off" }, enabled: false }, { id: "bit", provider: "demo" }] }))
+  const auto = () => { const r = cli(sb, ["hooks", "auto", "--json"]); assert.equal(r.status, 0, r.stderr); return Object.fromEntries(JSON.parse(r.stdout).map(e => [e.pet, e.status])) }
+  assert.deepEqual(auto(), { ember: "written", work: "written", slate: "absent" })
+  assert.equal(json(join(claude, "settings.json")).model, "x")
+  assert.ok(json(join(work, "settings.json")).hooks.Stop[0].hooks[0].command.includes("--pet work "))
+  // backups of two accounts never share a name
+  const backups = readdirSync(join(sb.env.XDG_STATE_HOME, "tokenlings", "backups")).flatMap(d => readdirSync(join(sb.env.XDG_STATE_HOME, "tokenlings", "backups", d)))
+  assert.ok(backups.includes("claude-claude-settings.json"), backups.join(","))
+  assert.deepEqual(auto(), { ember: "connected", work: "connected", slate: "absent" })
+  cli(sb, ["hooks", "uninstall", "claude", "--config-dir", work, "--yes"])
+  assert.deepEqual(auto(), { ember: "connected", work: "removed", slate: "absent" })
+  assert.equal(json(join(work, "settings.json")).hooks, undefined, "a removal stays removed")
+})

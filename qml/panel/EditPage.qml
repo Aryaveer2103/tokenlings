@@ -7,8 +7,9 @@ import "../../core/compose.mjs" as Compose
 import "../../forms/forms.mjs" as Forms
 
 // Edit: every part, colour, personality trait and behaviour of one pet, with
-// a live preview. Changes stay a draft until Save (which writes only that
-// pet's changed fields into pets.json).
+// a live preview. Each change is written as it is made (only that pet's
+// changed fields, into pets.json), so the pet on the bar follows at once;
+// Undo puts back the pet as it was when it was picked here.
 Item {
   id: page
   property var panel: null
@@ -21,9 +22,15 @@ Item {
     return pets.length ? pets[0] : null
   }
   property var draft: null
-  onOriginalChanged: draft = original ? JSON.parse(JSON.stringify(original)) : null
-  Component.onCompleted: draft = original ? JSON.parse(JSON.stringify(original)) : null
-  readonly property bool dirty: !!draft && !!original && JSON.stringify(draft) !== JSON.stringify(original)
+  property var snapshot: null                // the pet when it was picked: what Undo goes back to
+  function copy(o) { return o ? JSON.parse(JSON.stringify(o)) : null }
+  onOriginalChanged: {
+    if (!original) { draft = null; snapshot = null; return }
+    if (!snapshot || snapshot.id !== original.id) { writer.stop(); snapshot = copy(original) }
+    if (!writer.running) draft = copy(original)    // not over a change still on its way
+  }
+  Component.onCompleted: { draft = copy(original); snapshot = copy(original) }
+  readonly property bool changed: !!draft && !!snapshot && JSON.stringify(draft) !== JSON.stringify(snapshot)
   implicitHeight: col.implicitHeight
 
   // ---- options
@@ -55,14 +62,19 @@ Item {
     if (path.indexOf("look.palette.") === 0 && d.look.palette) delete d.look.palette.hashed
     draft = d
     if (path.indexOf("look.") === 0) preview.bounce()
+    writer.restart()
   }
   property string colourKey: "body"
-  function save() {
-    if (!draft || !dirty) { panel.say("nothing changed"); return }
-    var o = original, d = draft, changes = {}
+  // a burst of changes (a slider held, Reset) is written once
+  Timer { id: writer; interval: 150; onTriggered: page.write(page.draft) }
+  function write(d) {
+    var o = original
+    if (!d || !o || d.id !== o.id) return
+    var changes = {}
     for (var k in d) if (k !== "id" && JSON.stringify(d[k]) !== JSON.stringify(o[k])) changes[k] = d[k]
+    if (!Object.keys(changes).length) return
     var err = service.saveConfig(function(raw) { Config.setPet(raw, d.id, changes) })
-    panel.say(err ? "not saved: " + err : "saved " + d.name)
+    if (err) { panel.say("not saved: " + err); draft = copy(original) }
   }
 
   Column {
@@ -76,7 +88,10 @@ Item {
       foreground: page.fg; fontFamily: page.fontFamily
       options: page.pets.map(function(p) { return { value: p.id, label: p.name } })
       value: page.draft ? page.draft.id : ""
-      onChanged: function(v) { page.panel.selectedPet = v }
+      onChanged: function(v) {
+        if (writer.running) { writer.stop(); page.write(page.draft) }    // the last change first
+        page.panel.selectedPet = v
+      }
     }
     Item {
       width: parent.width
@@ -93,7 +108,7 @@ Item {
       Text {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        text: page.dirty ? "unsaved changes" : ""
+        text: page.changed ? "changes apply as you make them" : ""
         textFormat: Text.PlainText
         color: page.fg
         opacity: 0.7
@@ -187,7 +202,7 @@ Item {
 
     PanelSectionHeader { text: "Behaviour"; foreground: page.fg; fontFamily: page.fontFamily }
     Field { kind: "choice"; label: "Click"; foreground: page.fg; fontFamily: page.fontFamily
-            options: [{ value: "focus", label: "Focus its terminal" }, { value: "jump", label: "A happy jump" }, { value: "panel", label: "Open this panel" }, { value: "none", label: "Nothing" }]
+            options: [{ value: "usage", label: "Show its usage" }, { value: "focus", label: "Focus its terminal" }, { value: "jump", label: "A happy jump" }, { value: "panel", label: "Open this panel" }, { value: "none", label: "Nothing" }]
             value: page.draft ? page.draft.onClick : ""; onChanged: function(v) { page.set("onClick", v) } }
     Field { kind: "choice"; label: "Lives on"; foreground: page.fg; fontFamily: page.fontFamily
             options: [{ value: "bar", label: "The main bar" }].concat(Quickshell.screens.map(function(s) { return { value: String(s.name), label: String(s.name) } }))
@@ -198,11 +213,16 @@ Item {
     Field {
       kind: "buttons"
       foreground: page.fg; fontFamily: page.fontFamily
-      options: [{ value: "save", label: "Save" }, { value: "revert", label: "Revert" }, { value: "form", label: "Reset to its base form" }]
+      options: [page.changed ? { value: "undo", label: "Undo changes" } : { value: "undo", label: "Undo changes", dim: true }, { value: "form", label: "Reset to its base form" }]
       onPressed: function(v) {
-        if (v === "save") page.save()
-        else if (v === "revert") { page.draft = JSON.parse(JSON.stringify(page.original)); preview.bounce() }
-        else {
+        if (v === "undo") {
+          if (!page.changed) { page.panel.say("nothing to undo"); return }
+          writer.stop()
+          page.draft = page.copy(page.snapshot)
+          page.write(page.draft)
+          preview.bounce()
+          page.panel.say(page.snapshot.name + " is back as it was")
+        } else {
           var f = Forms.FORMS[page.draft.baseForm]
           var look = JSON.parse(JSON.stringify(f.look))
           look.followTheme = false; look.size = page.draft.look.size; look.evolution = f.evolution; look.evolved = page.draft.look.evolved

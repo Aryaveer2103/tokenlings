@@ -25,14 +25,18 @@ export const SETTINGS_DEFAULTS = {
   reducedMotion: false,
   notifications: false,
   showCwd: false,
-  progression: true
+  progression: true,
+  petSize: "large",           // small | medium | large | huge: every pet, against the bar's thickness
+  usageLimits: true,          // account limits in tooltips and the Pets tab (Omarchy's usage collectors)
+  autoConnect: false          // install hooks for new pets without asking (once per hooks file); Welcome's "Connect all" turns it on
 }
 
 const ENUMS = {
   powerMode: ["auto", "showoff", "balanced", "battery", "still"],
   roaming: ["home", "bar", "desktop"],
   ambient: ["rare", "normal", "lively"],
-  onClick: ["focus", "jump", "panel", "none"],
+  petSize: ["small", "medium", "large", "huge"],
+  onClick: ["usage", "focus", "jump", "panel", "none"],
   size: ["small", "medium", "large"],
   evolved: ["auto", "on", "off"],
   variant: ["auto", "off"]
@@ -90,7 +94,7 @@ export function defaultPet(provider, id, name) {
     look: Object.assign(clone(form.look), { followTheme: false, size: "medium", evolution: form.evolution, evolved: "auto", variant: "auto" }),
     personality: clone(form.personality),
     signatureMove: form.moves[0],
-    onClick: "focus",
+    onClick: "usage",
     home: "bar",
     enabled: true
   }
@@ -110,12 +114,12 @@ function normalizeSettings(raw, warn) {
   const s = clone(SETTINGS_DEFAULTS)
   if (raw === undefined) return s
   if (!isObj(raw)) { warn("settings: not an object, using defaults"); return s }
-  for (const key of ["powerMode", "roaming", "ambient"]) {
+  for (const key of ["powerMode", "roaming", "ambient", "petSize"]) {
     if (raw[key] === undefined) continue
     if (ENUMS[key].includes(raw[key])) s[key] = raw[key]
     else warn(`settings.${key}: "${raw[key]}" is not one of ${ENUMS[key].join(", ")}`)
   }
-  for (const key of ["social", "reducedMotion", "notifications", "showCwd", "progression"]) {
+  for (const key of ["social", "reducedMotion", "notifications", "showCwd", "progression", "usageLimits", "autoConnect"]) {
     if (raw[key] === undefined) continue
     if (typeof raw[key] === "boolean") s[key] = raw[key]
     else warn(`settings.${key}: expected true or false`)

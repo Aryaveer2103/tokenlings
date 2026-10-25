@@ -83,7 +83,7 @@ export function createEngine(options) {
     p.restFrom = null
     p.player = {
       clip, start: now, speed: (o && o.speed) || speedFor(p, clip), then: (o && o.then) || null, tag: (o && o.tag) || clipId,
-      from: Object.assign({}, p.values), lastLocal: -1, fps: (o && o.fps) || 0
+      from: blendFrom(p), lastLocal: -1, fps: (o && o.fps) || 0
     }
     // Swaps reset to defaults unless the clip sets them at its start.
     const base = Object.assign({}, SWAP_DEFAULTS, swapsAt(clip, 0))
@@ -93,13 +93,24 @@ export function createEngine(options) {
     return true
   }
 
+  // Where a blend starts: the pose as last drawn, but with the channels the
+  // offset and a flight add to (x, y, lift, rot, shadow) as the clip had them.
+  // Blending from the drawn x put the pet's distance from its slot in twice:
+  // a running pet jumped twice as far for a moment at each new clip.
+  const MOVED = ["x", "y", "lift", "rot", "shadow"]
+  function blendFrom(p) {
+    const from = Object.assign({}, p.values)
+    if (p.pose) for (const ch of MOVED) from[ch] = p.pose[ch]
+    return from
+  }
+
   // Back to the resting pose (blended).
   function rest(index) {
     const p = pets[index]
     if (!p) return
     p.player = null
     p.held = null
-    p.restFrom = { from: Object.assign({}, p.values), start: lastNow }
+    p.restFrom = { from: blendFrom(p), start: lastNow }
     for (const k of SWAPS) if (p.swaps[k] !== SWAP_DEFAULTS[k]) { p.swaps[k] = SWAP_DEFAULTS[k]; p.dirty.add(k) }
   }
 
@@ -109,6 +120,7 @@ export function createEngine(options) {
       p.player = null
       p.restFrom = null
       p.held = null
+      p.pose = null
       for (const ch of CHANNELS) if (p.values[ch] !== NEUTRAL[ch]) { p.values[ch] = NEUTRAL[ch]; p.dirty.add(ch) }
       for (const k of SWAPS) if (p.swaps[k] !== SWAP_DEFAULTS[k]) { p.swaps[k] = SWAP_DEFAULTS[k]; p.dirty.add(k) }
       p.spring = { x: 0, v: 0, lastY: 0, lastT: 0, active: false }
@@ -416,6 +428,9 @@ export function createEngine(options) {
     lastNow = now
     const fm = frameMs()
     let due = Infinity
+    // a pet sliding along the bar (an eased offset, a hop across a pill, a
+    // fling): the shell then times frames to the display, not to `due`
+    let moving = false
     const events = []
     for (let i = 0; i < pets.length; i++) {
       const p = pets[i]
@@ -487,8 +502,9 @@ export function createEngine(options) {
 
       // channels nobody drives rest at neutral
       for (const ch of CHANNELS) if (target[ch] === undefined) target[ch] = NEUTRAL[ch]
+      p.pose = { x: target.x, y: target.y, lift: target.lift, rot: target.rot, shadow: target.shadow }
       if (p.body) {
-        if (bodyStep(p, now, events, i)) due = Math.min(due, now + fm)
+        if (bodyStep(p, now, events, i)) { due = Math.min(due, now + fm); moving = true }
       }
       if (p.body) {
         // in the air: the hop channel (the shadow stays on the ground)
@@ -501,7 +517,10 @@ export function createEngine(options) {
         const off = offsetNow(p, grid ? Math.floor(now / grid) * grid : now)
         target.x += off.x
         target.lift += off.y
-        if (p.offset.ms && now < p.offset.start + p.offset.ms) due = Math.min(due, grid ? Math.floor(now / grid) * grid + grid : now + fm)
+        if (p.offset.ms && now < p.offset.start + p.offset.ms) {
+          due = Math.min(due, grid ? Math.floor(now / grid) * grid + grid : now + fm)
+          if (!grid) moving = true
+        }
       }
 
       // the spring (not in pose-only modes)
@@ -532,7 +551,7 @@ export function createEngine(options) {
       fx.push(q ? [i, q.kind, q.pet, q.x, q.y, q.rot, q.s, q.a] : [i, "", -1, 0, 0, 0, 0, 0])
     }
     poolDirty.clear()
-    return { writes, fx, due, events }
+    return { writes, fx, due, events, moving }
   }
 
   function current(index) { const p = pets[index]; return p && p.player ? p.player.tag : null }

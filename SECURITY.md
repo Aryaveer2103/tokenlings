@@ -7,23 +7,35 @@ item against the code.
 
 ## What it never does
 
-- No network access of any kind (no sockets, no HTTP, no downloads, no update checks).
-- No credentials: it never opens an agent's auth or token files.
+- No network access of its own (no sockets, no HTTP, no downloads, no update
+  checks). The one exception is opt-out: **Account limits** (Behaviour, on by
+  default) runs Omarchy's own usage collectors, `omarchy-agent-usage-<agent>
+  --limits-only`, the programs Omarchy's Agents panel runs. They ask the
+  provider's usage endpoint with that agent's own sign-in. See "Account limits".
+- No credentials: Tokenlings never opens an agent's auth or token files
+  (Omarchy's collectors do, to ask for the limits).
 - No `sudo`, `pkexec` or `doas`; no package installs; no systemd units; no
   services that outlive the shell.
 - From your agents' sessions it never stores prompts, tool input or output,
   file contents or full paths (see "What the hook records").
-- It never changes an agent's configuration without showing you the exact
-  change (a unified diff) and getting an explicit yes.
+- It changes an agent's configuration only to add or remove its own marked
+  hook entries, and only after an explicit yes: either **Connect all my
+  agents** on Welcome, which also turns on **Connect new pets to their agents
+  automatically** (Behaviour, off until then) so later pets are connected
+  without another question (once per hooks file, with a backup first and a
+  desktop notification naming each file; a file whose Tokenlings hooks you
+  removed is never connected again), or a single install after you have seen
+  its exact diff.
 
 ## Files it writes
 
 | Path | What | When |
 |---|---|---|
-| `$XDG_CONFIG_HOME/tokenlings/pets.json` | your pets and settings | when you save in the panel or use the CLI (`add`, `edit`, `rename`, `remove`, `import`) |
-| `$XDG_STATE_HOME/tokenlings/` (0700) | `pets.last-good.json` (the last config that loaded), `stats.json` (levels, turn counts and times), `welcomed` (the first-run welcome was seen), `backups/<time>/` (copies of agent configs taken before each hook install or uninstall) | while running; before each hook change |
+| `$XDG_CONFIG_HOME/tokenlings/pets.json` | your pets and settings | on the first run (only when there is none: a pet for each agent account found), as you change things in the panel, or from the CLI (`add`, `edit`, `rename`, `remove`, `import`) |
+| `$XDG_STATE_HOME/tokenlings/` (0700) | `pets.last-good.json` (the last config that loaded), `stats.json` (levels, turn counts and times), `welcomed` (the first-run welcome was seen), `auto-connected` (the hooks files connected automatically once: never again), `backups/<time>/` (copies of agent configs taken before each hook install or uninstall) | while running; before each hook change |
+| `$XDG_CACHE_HOME/tokenlings/usage/<pet>/` (0700) | the cache of Omarchy's usage collector for that pet's account (each account has its own, so two accounts' limits never mix) | when limits are read |
 | `$XDG_RUNTIME_DIR/tokenlings/events/` (0700, made at start) and `<pet>.log` in it (0600) | one line per agent hook event (see below); the hook starts the log over past about 60 KiB | each time an agent's hook runs |
-| an agent's hook settings | Tokenlings' hook entries, marked so they can be removed exactly | only after you confirm the diff (panel **Connect**, or `tokenlings hooks install`) |
+| an agent's hook settings | Tokenlings' hook entries, marked so they can be removed exactly | after **Connect all my agents** / with automatic connecting on (once per file, see above), or after you confirm the diff (panel **Connect**, or `tokenlings hooks install`) |
 
 Nothing is ever written inside the plugin folder. `pets.json` is written
 whole (a temporary file renamed over it): the panel first checks the new
@@ -36,7 +48,7 @@ shown and confirmed, backed up first); with `--purge` it also deletes
 `~/.config/tokenlings`, `~/.local/state/tokenlings` and
 `$XDG_RUNTIME_DIR/tokenlings`, asking for each (never following a symlink).
 
-Agent hook files it can change, one per provider, after confirmation:
+Agent hook files it can change, one per provider (after Connect all, or after confirming a diff):
 `<claude config dir>/settings.json`, `<codex home>/hooks.json`,
 `<grok home>/hooks/tokenlings.json`, `<kimi home>/config.toml` (a marked block),
 `<opencode config>/plugins/tokenlings.js`, `<muse config>/settings.json`,
@@ -108,11 +120,21 @@ without removing its hooks leaves every agent working.
     paths to existing folders. Everything else in the environment is discarded
     in the same pipeline, never stored or shown. Shell startup files (`.bashrc`
     and the like) are never read.
-  What is found is only proposed; nothing is written without a yes.
+  On the first run (no `pets.json`), a pet is made for each account found
+  (folders that look like backups are left out); after that, what is found is
+  only proposed and nothing is written without a yes.
 - `tokenlings doctor` (CLI and the About and Connect tabs): for each Codex
   `hooks.json` with Tokenlings entries, the first 1 MiB of that account's
   `config.toml`, to see whether `[hooks.state."…"]` trust entries exist for
   them (names and `enabled` only; hashes are not compared)
+
+## Account limits
+
+Omarchy's collectors print one JSON record (limits, plan, token counts).
+Tokenlings keeps only each limit's name, percentage and reset time, the plan
+name, and the status line, in memory; nothing from the record is written by
+Tokenlings or shown anywhere but the pet's tooltip and its card on **Pets**.
+Turning **Account limits** off stops the collectors.
 
 ## Commands it runs
 
@@ -120,10 +142,12 @@ without removing its hooks leaves every agent working.
 |---|---|
 | `sh -c` with fixed scripts | bounded file reads, `/proc` sampling, the agent-account scan (folders and running agents' account variables), making the events folder |
 | `hyprctl dispatch` (`hl.dsp.focus(...)`, or `focuswindow` on non-Lua configs) | clicking a pet focuses its agent's terminal |
-| `notify-send` | only if you turn notifications on; the text is the pet's name and its state |
+| `notify-send` | if you turn notifications on (the pet's name and its state); and once when pets were connected automatically (pet names, agents, where the backups are) |
+| `omarchy-agent-usage-<claude\|codex\|grok\|kimi> --limits-only` | **Account limits**: one account at a time, with that pet's account folder in the agent's variable (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GROK_HOME`, `KIMI_CODE_HOME`) and a cache of its own; every 5 minutes while you are at the computer, and when you hover a pet (at most once a minute) |
 | `wl-copy` | **Share card** copies the pet's design card |
+| `omarchy-shell omarchy.agents select <pet id\|provider>`, then `open` | clicking a pet (**Show its usage**) opens Omarchy's Agents panel on that agent |
 | `mkdir -p -m 700` | its own config and state folders |
-| `bin/tokenlings` | the panel's hook installer, hook status and doctor (the same script as the CLI; it uses `jq`, `diff`, `cmp`, `base64`, `cksum`, `mktemp`) |
+| `bin/tokenlings` | the panel's hook installer, hook status, automatic connecting (`hooks auto`) and doctor (the same script as the CLI; it uses `jq`, `diff`, `cmp`, `base64`, `cksum`, `mktemp`) |
 
 Process arguments never carry private data.
 

@@ -26,7 +26,9 @@ PanelWindow {
   readonly property var barWindow: home ? home.QsWindow.window : null
   readonly property real thickness: barWindow ? (vertical ? barWindow.width : barWindow.height) : engine.barSize
   readonly property real barLength: barWindow ? (vertical ? barWindow.height : barWindow.width) : 0
-  readonly property real headroom: Math.round(thickness * 0.6)
+  // room past the bar's edge: hops, and pets bigger than the bar (a large
+  // pet at the huge size stands well out of it)
+  readonly property real headroom: Math.round(Math.max(thickness * 0.6, petSize * 1.47 - thickness))
 
   // Which pets live on this bar.
   readonly property var indices: engine.petsOn(home)
@@ -93,7 +95,11 @@ PanelWindow {
   surfaceFormat.opaque: false
   exclusionMode: ExclusionMode.Ignore
   WlrLayershell.namespace: "tokenlings-stage"
-  WlrLayershell.layer: WlrLayer.Top
+  // Overlay, not Top: on Top it shares a level with the bar, and whichever
+  // surface mapped last is above. With the bar on top, the pets still show
+  // through it but every hover and click lands on the bar (no tooltips, a
+  // click opening the panel); that depended on which started first.
+  WlrLayershell.layer: WlrLayer.Overlay
   WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
 
   // The surface is only as long as the pets' row plus a pet's width of room on

@@ -1,8 +1,10 @@
 // First run: which agent accounts are on this machine, and the pets we
 // would suggest for them. The shell scans (scanScript: folders that exist,
 // and the account variables of agents that are running); this turns the list
-// into proposals. Nothing is written until the user confirms, and agent
-// configs only after a per-provider yes in the Connect step.
+// into proposals. On the first run the shell creates them all (backup-looking
+// folders stay unticked, so out); later, nothing is written until the user
+// confirms. Agent configs are connected by settings.autoConnect, or after a
+// per-provider yes in the Connect step.
 import { FORMS, formFor } from "../forms/forms.mjs"
 import { ACCOUNTS, PROVIDERS, extraGlobs, absolute, tilde, petDir, looksLikeBackup } from "./accounts.mjs"
 

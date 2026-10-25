@@ -11,6 +11,7 @@
 #   tokenlings hooks install <provider> --pet <id> [--config-dir DIR] [--yes] [--dry-run]
 #   tokenlings hooks uninstall <provider> [--config-dir DIR] [--yes] [--dry-run]
 #   tokenlings hooks status
+#   tokenlings hooks auto                                 connect every pet without hooks yet (once per hooks file)
 #   tokenlings doctor
 #   tokenlings demo [--state STATE] [--pet PET] [--seed N]    (no options: every state in turn)
 #   tokenlings event <pet> <event> [--tool CATEGORY]      a test event, as a hook would send it
@@ -393,7 +394,10 @@ backup() {
   [ -f "$1" ] || return 0
   dir="$STATE/backups/$(date +%Y%m%d-%H%M%S)"
   mkdir -p -m 700 "$dir" || die "cannot create $dir"
-  cp -p "$1" "$dir/$2-$(basename "$1")" && say "backup: $dir/$2-$(basename "$1")"
+  # the account folder in the name: two accounts backed up in one second
+  # must not overwrite each other
+  b="$dir/$2-$(basename "$(dirname "$1")" | sed 's/^\.//')-$(basename "$1")"
+  cp -p "$1" "$b" && say "backup: $b"
 }
 # The change as a unified diff (or the whole file when it is new).
 show_diff() {  # show_diff <file> <new>
@@ -494,6 +498,47 @@ hooks_uninstall() {
     kimi) toml_strip "$file" > "$new" ;;
   esac
   apply "$file" "$new" "$prov" "$yes" "$dry"
+}
+
+# Connects every pet in pets.json that has no hooks yet, without asking (the
+# shell runs this when pets are added; settings.autoConnect turns it off).
+# Each hooks file is handled once: one that already has Tokenlings hooks, or
+# that we connected before, is noted in $STATE/auto-connected and never
+# touched again, so hooks you remove stay removed. Agents whose account
+# folder does not exist are skipped. Backups as for hooks install.
+hooks_auto() {
+  need_jq
+  done_file="$STATE/auto-connected"
+  mkdir -p -m 700 "$STATE" || die "cannot create $STATE"
+  [ -f "$done_file" ] || : > "$done_file"
+  out=$(mktemp) || die "mktemp failed"
+  trap 'rm -f "$out"' EXIT
+  pets_json | jq -r '.pets[]? | select(type == "object" and .enabled != false)
+                     | [(.id // ""), (.provider // ""), (if (.account.configDir | type) == "string" then .account.configDir else "" end)] | @tsv' \
+    | head -n 64 | while IFS='	' read -r id prov dir; do
+    valid_id "$id" || continue
+    case "$prov" in claude|codex|grok|kimi|opencode|muse|gemini) ;; *) continue ;; esac
+    case "$dir" in "~") dir=$HOME ;; "~"/*) dir="$HOME/${dir#\~/}" ;; esac
+    file=$(target_file "$prov" "$dir") || continue
+    case "$prov" in grok|opencode) acct=$(dirname "$(dirname "$file")") ;; *) acct=$(dirname "$file") ;; esac
+    note() { jq -cn --arg pet "$id" --arg p "$prov" --arg f "$file" --arg s "$1" --arg e "${2:-}" '{ pet: $pet, provider: $p, file: $f, status: $s, error: $e }' >> "$out"; }
+    if [ ! -d "$acct" ]; then note absent; continue; fi
+    if [ -f "$file" ] && [ ! -L "$file" ] && head -c 1048576 "$file" | grep -q "$MARK"; then
+      grep -Fxq "$prov	$file" "$done_file" || printf '%s\t%s\n' "$prov" "$file" >> "$done_file"
+      if head -c 1048576 "$file" | grep -q -- "--pet $id\\b"; then note connected; else note other; fi
+      continue
+    fi
+    if grep -Fxq "$prov	$file" "$done_file"; then note removed; continue; fi
+    r=$(JSON=1; hooks_install "$prov" --pet "$id" ${dir:+--config-dir "$dir"} --yes </dev/null 2>/dev/null | tail -n 1)
+    if printf '%s' "$r" | jq -e '.ok == true' >/dev/null 2>&1; then
+      printf '%s\t%s\n' "$prov" "$file" >> "$done_file"
+      note written
+    else
+      note failed "$(printf '%s' "$r" | jq -r '.error // "the installer failed"' 2>/dev/null || echo "the installer failed")"
+    fi
+  done
+  if [ $JSON = 1 ]; then jq -s -c . "$out"
+  else jq -r '"\(.provider)\t\(.pet)\t\(.status)\t\(.file)\(if .error != "" then "\t" + .error else "" end)"' "$out"; fi
 }
 
 # Which pet each provider's hooks drive, per config folder we know of:
@@ -666,7 +711,8 @@ case "${1:-}" in
       install) shift; hooks_install "$@" ;;
       uninstall) shift; hooks_uninstall "$@" ;;
       status) shift; hooks_status "$@" ;;
-      *) die "hooks install|uninstall|status" ;;
+      auto) shift; hooks_auto "$@" ;;
+      *) die "hooks install|uninstall|status|auto" ;;
     esac ;;
   doctor) shift; doctor "$@" ;;
   event) shift; send_event "$@" ;;

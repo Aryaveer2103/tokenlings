@@ -6,8 +6,9 @@ import "../../core/card.mjs" as Card
 import "../../core/tiers.mjs" as Tiers
 import "../../forms/forms.mjs" as Forms
 
-// Pets: a card per pet with its live preview, what it is doing and its
-// stats, and what you can do with it; adding a pet and importing a card.
+// Pets: a card per pet with its live preview, what it is doing, its
+// account's limits and its stats, and what you can do with it; adding a pet
+// and importing a card.
 Item {
   id: page
   property var panel: null
@@ -216,6 +217,64 @@ Item {
                 font.family: page.fontFamily
                 font.pixelSize: Style.font.caption
               }
+              // the account's limits: a meter each, the plan, when it resets
+              Repeater {
+                model: { page.service.usageVersion; var u = page.service.usageFor(card.p.id); return u ? u.limits : [] }
+                Row {
+                  id: limit
+                  required property var modelData
+                  readonly property real pct: Math.max(0, Math.min(1, modelData.percent))
+                  width: parent.width
+                  spacing: Style.space(6)
+                  Text {
+                    width: Math.round(parent.width * 0.24)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: limit.modelData.label
+                    textFormat: Text.PlainText
+                    elide: Text.ElideRight
+                    color: page.fg
+                    font.family: page.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                  Rectangle {
+                    width: Math.round(parent.width * 0.36)
+                    height: 5
+                    radius: 2.5
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: Qt.rgba(page.fg.r, page.fg.g, page.fg.b, 0.15)
+                    Rectangle {
+                      width: Math.max(height, parent.width * limit.pct)
+                      height: parent.height
+                      radius: parent.radius
+                      visible: limit.pct > 0
+                      color: limit.pct >= 0.9 ? Color.urgent : Color.accent
+                    }
+                  }
+                  Text {
+                    width: parent.width - Math.round(parent.width * 0.6) - 2 * Style.space(6)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: { page.tick; var now = Date.now(); return Math.round(limit.modelData.percent * 100) + "%" + (limit.modelData.resetsAt > now ? " · resets in " + page.service.spanText(limit.modelData.resetsAt - now) : "") }
+                    textFormat: Text.PlainText
+                    elide: Text.ElideRight
+                    color: page.fg
+                    opacity: 0.8
+                    font.family: page.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+              }
+              Text {
+                readonly property var u: { page.service.usageVersion; return page.service.usageFor(card.p.id) }
+                visible: !!u && (u.plan !== "" || (u.stale && u.limits.length > 0) || (u.limits.length === 0 && u.status !== ""))
+                width: parent.width
+                text: !u ? "" : [u.plan ? u.plan + " plan" : "", u.stale && u.limits.length ? "last known limits" : "", u.limits.length === 0 ? u.status : ""].filter(function(t) { return t }).join(" · ")
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+                color: page.fg
+                opacity: 0.7
+                font.family: page.fontFamily
+                font.pixelSize: Style.font.caption
+              }
               Text {
                 width: parent.width
                 text: page.statsLine(card.p.id)
@@ -231,7 +290,9 @@ Item {
           Field {
             kind: "buttons"
             foreground: page.fg; fontFamily: page.fontFamily
-            options: [{ value: "edit", label: "Edit" }, { value: "connect", label: "Connect" }, { value: "toggle", label: card.p.enabled ? "Turn off" : "Turn on" },
+            options: [{ value: "edit", label: "Edit" },
+                      (page.service.hookedVersion, page.service.isHooked(card.p.id, card.p.provider)) ? { value: "connect", label: "✓ Connected", dim: true } : { value: "connect", label: "Connect" },
+                      { value: "toggle", label: card.p.enabled ? "Turn off" : "Turn on" },
                       { value: "card", label: "Share card" }, { value: "remove", label: page.removing === card.p.id ? "Remove?" : "Remove" }]
             onPressed: function(v) { page.act(card.p, v) }
           }

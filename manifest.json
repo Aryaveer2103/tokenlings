@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.aryaveer2103.tokenlings",
   "name": "Tokenlings",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Aryaveer Singh Baloria",
   "license": "MIT",
   "description": "Animated pets for your AI coding agents. One pet per account, any provider: they work when your agent works, wave when it needs you, celebrate when it finishes, and roam the bar.",

@@ -2,10 +2,14 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 import "../../core/welcome.mjs" as Welcome
+import "../../core/config.mjs" as Config
 
 // Welcome (first run, or "Find my agents again"): the agent accounts on this
-// machine, one suggested pet for each. Creating them writes pets.json only;
-// connecting an agent is a second, separate yes per agent, with its diff.
+// machine, one suggested pet for each. On the first run the service has
+// already made them (pets.json only), and this page shows them. Agents'
+// settings change only on a yes: "Connect all my agents" (one click for every
+// pet, and settings.autoConnect on for pets added later), or Connect… per
+// pet, with its diff.
 Item {
   id: page
   property var panel: null
@@ -20,12 +24,29 @@ Item {
   readonly property var looks: service && proposals.length ? service.proposalLooks(proposals) : []
   property var created: []
   property var connected: ({})
+  function isConnected(p) { return !!page.service && (page.service.hookedVersion, page.service.isHooked(p.id, p.provider)) || !!page.connected[p.id] }
+  readonly property var hookable: created.filter(function(p) { return p.hooks })
+  readonly property bool allConnected: hookable.length > 0 && hookable.every(function(p) { return page.isConnected(p) })
   // the panel is handed over once the page has loaded
-  onServiceChanged: if (service && step === "scan") {
+  onServiceChanged: begin()
+  function begin() {
+    if (!service || step !== "scan") return
+    if (service.setupResult) {
+      created = service.setupResult.pets
+      step = "connect"
+      service.setupSeen = true
+      return
+    }
+    if (service.autoSetupRunning || service.autoSetupDue) return    // the first run is being set up: wait for it
     service.scanAgents(function(list) {
       page.proposals = list
       page.step = "choose"
     })
+  }
+  Connections {
+    target: page.service
+    function onAutoSetupRunningChanged() { page.begin() }
+    function onSetupResultChanged() { page.begin() }
   }
   function setProposal(i, key, value) {
     var l = proposals.slice()
@@ -58,8 +79,10 @@ Item {
       font.family: page.fontFamily
       font.pixelSize: Style.font.bodySmall
       text: page.step === "scan" ? "Looking for your AI agents…"
-          : page.step === "choose" ? (page.proposals.length ? "One pet for each agent account found on this machine. Untick any you do not want and name them as you like. Nothing is written until you create them, and your agents' settings stay untouched." : "No agent accounts found. Bit, the demo pet, will keep you company; you can add pets any time on the Pets tab.")
-          : "Your pets are ready. To have a pet react to its agent, connect it: you will see the exact change to that agent's settings before anything is written."
+          : page.step === "choose" ? (page.proposals.length ? "One pet for each agent account found on this machine. Untick any you do not want and name them as you like. Nothing is written until you create them." + (page.service && page.service.settings.autoConnect ? " Then each is connected to its agent (Behaviour turns that off)." : " Your agents' settings stay untouched.") : "No agent accounts found. Bit, the demo pet, will keep you company; you can add pets any time on the Pets tab.")
+          : page.allConnected ? "Your pets are ready and connected to their agents. Hover a pet to see what it is doing and how much of its account's limits are used."
+          : page.hookable.length && page.service && page.service.settings.autoConnect ? "Your pets are ready. Connecting them to their agents…"
+          : "Your pets are ready. Connect them so they react to your agents: Tokenlings adds its hooks to each agent's settings (each file is backed up first, and Remove hooks takes them out again). Connect all at once, or one at a time to see each change first."
     }
 
     // ---- choose
@@ -118,7 +141,7 @@ Item {
 
     // ---- connect, one agent at a time
     Repeater {
-      model: page.step === "connect" ? page.created.filter(function(p) { return p.hooks }) : []
+      model: page.step === "connect" ? page.hookable : []
       Column {
       id: conn
       required property var modelData
@@ -130,9 +153,10 @@ Item {
         kind: "buttons"
         label: modelData.name + " · " + modelData.provider
         foreground: page.fg; fontFamily: page.fontFamily
-        options: [{ value: "connect", label: page.connected[modelData.id] ? "Connected" : "Connect…" }]
+        options: [page.isConnected(modelData) ? { value: "connect", label: "✓ Connected", dim: true } : { value: "connect", label: "Connect…" }]
         onPressed: {
           var p = modelData
+          if (page.isConnected(p)) { page.panel.say(p.name + " is already connected"); return }
           var dir = p.account.configDir ? ["--config-dir", p.account.configDir] : []
           page.panel.confirmChange("Connect " + p.name + " to " + p.provider + " (" + p.account.configDir + ")",
                                    ["hooks", "install", p.provider, "--pet", p.id, "--dry-run"].concat(dir),
@@ -143,7 +167,7 @@ Item {
       // Codex runs a new hook only after it is trusted, per account
       Text {
         width: parent.width
-        visible: Welcome.needsTrustStep(conn.modelData.provider) && !!page.connected[conn.modelData.id]
+        visible: Welcome.needsTrustStep(conn.modelData.provider) && page.isConnected(conn.modelData)
         wrapMode: Text.Wrap
         textFormat: Text.PlainText
         color: page.fg
@@ -158,8 +182,15 @@ Item {
       visible: page.step === "connect"
       kind: "buttons"
       foreground: page.fg; fontFamily: page.fontFamily
-      options: [{ value: "done", label: "Done" }]
-      onPressed: page.panel.show("pets")
+      // the one yes for every agent: auto-connect on, which connects them all now
+      // (tokenlings hooks auto) and the pets added later
+      options: (page.hookable.length && !page.allConnected && page.service && !page.service.settings.autoConnect
+                ? [{ value: "all", label: "Connect all my agents" }] : []).concat([{ value: "done", label: page.allConnected ? "Done" : "Not now" }])
+      onPressed: function(v) {
+        if (v === "done") { page.panel.show("pets"); return }
+        var err = page.service.saveConfig(function(raw) { Config.setSetting(raw, "autoConnect", true) })
+        page.panel.say(err ? "not saved: " + err : "connecting your agents… (Behaviour → Connect new pets automatically turns this off)")
+      }
     }
   }
 }

@@ -30,9 +30,24 @@ BarWidget {
   implicitWidth: vertical ? barSize : (service ? service.slotWidthFor(root) : barSize) + 4
   implicitHeight: vertical ? (service ? service.slotWidthFor(root) : barSize) + 4 : barSize
 
-  // ---- tooltips (shown for the pet under the pointer; text is plain)
-  function showPetTooltip(text) { if (bar) bar.showTooltip(root, String(text)) }
-  function hidePetTooltip() { if (bar) bar.hideTooltip(root) }
+  // ---- tooltips (shown for the pet under the pointer; text is plain). The
+  // pointer is over the stage, not this slot, so the bar learns it is hovered
+  // from here: it shows a tooltip only while its target says tooltipHovered.
+  // Crossing from one pet to the next can bring the new pet's enter before
+  // the old one's leave: a leave only hides the tooltip of its own pet.
+  property bool tooltipHovered: false
+  property int tooltipPet: -1
+  function showPetTooltip(text, index) {
+    tooltipPet = index === undefined ? -1 : index
+    tooltipHovered = true
+    if (bar) bar.showTooltip(root, String(text))
+  }
+  function hidePetTooltip(index) {
+    if (index !== undefined && index !== tooltipPet) return
+    tooltipPet = -1
+    tooltipHovered = false
+    if (bar) bar.hideTooltip(root)
+  }
 
   // ---- panel contract (see omarchy.clock)
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
@@ -43,16 +58,18 @@ BarWidget {
   function togglePanel() { toggle() }
   function closeForPopoutSwitch() { if (panelLoader.item) panelLoader.item.closeForPopoutSwitch() }
   // the panel on a given page (IPC editor, the first-run welcome)
-  function openPage(page) {
+  function openPage(page, petId) {
     if (!panelLoader.item) return
-    panelLoader.item.show(page || "pets")
+    panelLoader.item.show(page || "pets", petId)
     panelLoader.item.open()
   }
 
-  // First run (no pets.json, never welcomed): the panel opens on Welcome once,
-  // from the main bar, a moment after the shell has settled.
+  // First run (no pets.json, never welcomed): the pets are made on their own,
+  // then the panel opens on Welcome once, from the main bar, to show them and
+  // offer to connect their agents (or, with no agents found, to offer Bit).
   property bool welcomeShown: false
-  readonly property bool welcomeDue: !!service && service.welcomePending && service.homes[service.mainHome] === root && !welcomeShown
+  readonly property bool welcomeDue: !!service && (service.welcomePending || (service.setupResult !== null && !service.setupSeen))
+                                     && !service.autoSetupRunning && service.homes[service.mainHome] === root && !welcomeShown
   onWelcomeDueChanged: if (welcomeDue) welcomeTimer.restart()
   Timer {
     id: welcomeTimer

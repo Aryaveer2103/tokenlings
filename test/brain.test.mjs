@@ -342,3 +342,16 @@ test("notes for notifications come with the event, once per wait, even with no u
   assert.deepEqual(b.takeNotes(), [{ pet: 0, what: "done" }])
   assert.deepEqual(b.takeNotes(), [])
 })
+
+test("usage events animate the pet but are not a session", () => {
+  const s = createSessions()
+  const out = s.apply(ev("a", "usage.exhausted", 0, { session: "usage" }))
+  assert.equal(out.kind, "usage.exhausted")
+  assert.equal(s.count("a"), 0)
+  const b = brainWith(["ember"])
+  b.update(0)
+  b.event({ pet: "ember", session: "usage", event: "usage.reset", at: 100 }, 100)
+  const cmds = run(b, 100, 2000)
+  assert.ok(cmds.some(c => c.pet === 0 && (c.action === "usage.reset" || c.clip === "usageReset" || c.clip === "usageResetB")), "the reset plays")
+  assert.equal(b.describe(0).sessions, 0)
+})

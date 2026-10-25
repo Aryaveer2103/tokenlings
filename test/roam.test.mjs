@@ -148,3 +148,27 @@ test("engine: a flung pet flies, bounces off the bar's ends, lands and settles; 
   r = eng.tick(now + 4000)
   assert.equal(r.due, Infinity)
 })
+
+test("engine: a new clip on a pet away from its slot keeps it where it is (the offset is not blended in twice)", () => {
+  const eng = createEngine({ clips: CLIPS, seed: 1, fps: 60 })
+  eng.setPets([{ id: "a" }])
+  let now = 1000, x = 0
+  const drawn = r => { for (const w of r.writes) if (w[0] === 0 && w[1] === "x") x = w[2]; return x }
+  eng.tick(now)
+  eng.play(0, "zoomLeft")
+  eng.setOffset(0, -80, 1000, { ease: "linear" })
+  for (now += 16; now <= 2100; now += 16) drawn(eng.tick(now))
+  const check = (what) => {
+    for (let k = 0; k < 40; k++, now += 16) {
+      const v = drawn(eng.tick(now))
+      assert.ok(Math.abs(v - eng.offsetOf(0).x) < 2, `${what}: drawn ${v.toFixed(1)}, offset ${eng.offsetOf(0).x.toFixed(1)}`)
+    }
+  }
+  eng.play(0, "skidLeft")
+  check("the skid")
+  eng.play(0, "zoomRight")
+  eng.setOffset(0, 0, 900, { ease: "linear" })
+  check("the run back")
+  eng.rest(0)
+  check("resting")
+})

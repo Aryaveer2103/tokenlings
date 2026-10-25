@@ -90,13 +90,18 @@ Item {
           }
         }
         // The pointer. It follows the pet off its slot (walks, trips, flings)
-        // so the input mask can stay exactly where pets are.
+        // so the input mask can stay exactly where pets are; while the pet
+        // only leans, hops or bounces in place it stays put: following those
+        // slid it out from under a still pointer (leave, enter, the hover
+        // clip over the click's, a neighbour's area overlapping).
         MouseArea {
           id: hitArea
           readonly property var rig: cell.entry ? cell.entry.state : null
+          readonly property real awayX: rig && Math.abs(rig.x) > 10 ? rig.x : 0
+          readonly property real awayY: { var v = rig ? rig.y * row.hopScale + rig.lift + rig.perch * row.perchDepth : 0; return Math.abs(v) > 12 ? v : 0 }
           enabled: row.interactive && pet.visible
-          x: rig ? rig.x * cell.cellUnit : 0
-          y: rig ? (rig.y * row.hopScale + rig.lift + rig.perch * row.perchDepth) * cell.cellUnit : 0
+          x: awayX * cell.cellUnit
+          y: awayY * cell.cellUnit
           width: cell.width
           height: cell.height
           hoverEnabled: true

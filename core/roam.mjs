@@ -7,7 +7,7 @@
 // the inputs are logical pixels. Every trip ends with the pet home (0, 0).
 
 export const STROLL_SPEED = 34        // grid units per second
-export const ZOOM_SPEED = 150
+export const ZOOM_SPEED = 90         // a dash, still readable at a bar's frame rate
 export const CLIMB_SPEED = 120
 export const BAR_TRIP_MS = 10000      // budget: bar-roam bursts ≤ 10 s
 export const DESKTOP_TRIP_MS = 20000  // budget: desktop excursions ≤ 20 s
@@ -91,6 +91,17 @@ function span(bar) {
   return { lo: Math.max(bar.lo, bar.home - reach), hi: Math.min(bar.hi, bar.home + reach) }
 }
 const inPill = (px, bar) => (bar.obstacles || []).some(([a, b]) => px > a - 4 && px < b + 4)
+// The open floor around home up to the nearest widget on each side: zoomies
+// never hop, so they stay on it rather than running across other widgets.
+function openFloor(bar, s) {
+  const half = 16 * bar.unit + 2
+  let lo = s.lo, hi = s.hi
+  for (const [a, b] of bar.obstacles || []) {
+    if (b <= bar.home) lo = Math.max(lo, b + half)
+    else if (a >= bar.home) hi = Math.min(hi, a - half)
+  }
+  return { lo, hi }
+}
 
 // bar: { pet, unit, home, lo, hi, obstacles, pillLift, arcRoom, reach, hopPx }
 // kind: stroll | perch | zoomies. Returns a scene, or null when there is no room.
@@ -115,9 +126,10 @@ export function planBarRoam(kind, bar, rng) {
   }
 
   if (kind === "zoomies") {
-    const sideA = (bar.home - s.lo) > (s.hi - bar.home) ? -1 : 1
-    const a = sideA < 0 ? s.lo : s.hi
-    const b = sideA < 0 ? Math.min(s.hi, bar.home + (bar.home - s.lo) * 0.5) : Math.max(s.lo, bar.home - (s.hi - bar.home) * 0.5)
+    const f = openFloor(bar, s)
+    const sideA = (bar.home - f.lo) > (f.hi - bar.home) ? -1 : 1
+    const a = sideA < 0 ? f.lo : f.hi
+    const b = sideA < 0 ? Math.min(f.hi, bar.home + (bar.home - f.lo) * 0.5) : Math.max(f.lo, bar.home - (f.hi - bar.home) * 0.5)
     if (Math.abs(a - bar.home) < 80) return null
     const run = (px) => {
       const to = tp.g(px), d = to - tp.x
